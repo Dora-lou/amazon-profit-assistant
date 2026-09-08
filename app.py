@@ -21,6 +21,7 @@ from modules.calculations import (
     tacos_vs_target,
     target_margin_price,
 )
+from modules.exporter import build_profit_workbook, export_filename
 from modules.repository import repository
 
 
@@ -190,9 +191,18 @@ def overview(products: list[dict]) -> None:
     else:
         st.warning("当前使用 SQLite 演示存储。Streamlit Cloud 重启或重新部署后，运行时修改的数据可能丢失；正式多人使用请配置 Supabase。")
 
+    if products:
+        st.download_button(
+            "导出全部产品",
+            data=build_profit_workbook(products),
+            file_name=export_filename(products),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
+
     sort_by = st.selectbox(
         "产品排序",
-        ["月预估利润", "净利率", "当前TACOS", "广告剩余空间", "状态"],
+        ["月预估利润", "净利率", "TACOS", "状态"],
         index=0,
     )
 
@@ -234,8 +244,7 @@ def overview(products: list[dict]) -> None:
     sort_map = {
         "月预估利润": ("_profit", True),
         "净利率": ("_margin", False),
-        "当前TACOS": ("_tacos", False),
-        "广告剩余空间": ("_headroom", True),
+        "TACOS": ("_tacos", False),
         "状态": ("_status_order", True),
     }
     sort_key, ascending = sort_map[sort_by]
@@ -347,7 +356,19 @@ def recommendation_block(product, breakdown: dict, be_price: float | None, targe
     end_section()
 
 
-def detail(row: dict) -> None:
+def overview_line(product, breakdown: dict, be_price: float | None, target_price: float | None, room: float) -> str:
+    price_parts = []
+    if be_price is not None:
+        be_gap = product.price - be_price
+        price_parts.append(f"当前售价{'高于' if be_gap >= 0 else '低于'}保本售价{money(abs(be_gap))}")
+    if target_price is not None:
+        target_gap = product.price - target_price
+        price_parts.append(f"当前售价{'高于' if target_gap >= 0 else '低于'}目标利润最低售价{money(abs(target_gap))}")
+    ad_text = f"当前TACOS{'仍有' if room >= 0 else '超出'}{pp(abs(room))}空间"
+    return "，".join(price_parts + [ad_text]) + "。"
+
+
+def detail(row: dict, selected_id) -> None:
     product = product_from_row(row)
     breakdown = profit_breakdown(product)
     target_limit = max_tacos_for_margin(product, product.target_margin)
@@ -359,26 +380,52 @@ def detail(row: dict) -> None:
 
     st.title(product.name)
     st.caption(f"ASIN：{product.asin or '-'} · FNSKU：{product.fnsku or '-'} · 阶段：{product.stage} · 定位：{product.positioning}")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.download_button(
+            "导出当前产品",
+            data=build_profit_workbook([row]),
+            file_name=export_filename([row]),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ):
+            pass
+    with c2:
+        all_products = repository.list_products()
+        st.download_button(
+            "导出全部产品",
+            data=build_profit_workbook(all_products),
+            file_name=export_filename(all_products),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-    section("产品基本信息")
-    st.dataframe(
-        pd.DataFrame(
-            [
-                ["ASIN", product.asin],
-                ["FNSKU", product.fnsku or "-"],
-                ["产品名称", product.name],
-                ["产品阶段", product.stage],
-                ["产品定位", product.positioning],
-            ],
-            columns=["字段", "内容"],
-        ),
-        use_container_width=True,
-        hide_index=True,
-        row_height=38,
-    )
-    end_section()
+    with st.expander("编辑产品档案 / 经营参数", expanded=False):
+        data = profile_form(row, "保存修改")
+        if data:
+            repository.update_product(selected_id, data)
+            st.rerun()
 
     section("当前经营概览")
+    target_margin = st.number_input(
+        "目标净利率(%)",
+        min_value=0.0,
+        value=float(product.target_margin * 100),
+        step=0.5,
+        key=f"overview_target_margin_{selected_id}",
+        help="修改后可立即查看测算结果，点击保存按钮后写入当前产品。",
+    ) / 100
+    if abs(target_margin - product.target_margin) > 1e-9:
+        product.target_margin = target_margin
+        breakdown = profit_breakdown(product)
+        target_limit = max_tacos_for_margin(product, product.target_margin)
+        room = ad_headroom(product)
+        be_tacos = breakeven_tacos(product)
+        be_price = breakeven_price(product)
+        target_price = target_margin_price(product)
+        if st.button("保存目标净利率到当前产品", key=f"save_target_margin_{selected_id}"):
+            updated = dict(row)
+            updated["target_margin"] = target_margin
+            repository.update_product(selected_id, updated)
+            st.rerun()
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("当前售价", money(product.price))
     c2.metric("单件净利润", money(breakdown["net_profit"]))
@@ -390,22 +437,25 @@ def detail(row: dict) -> None:
     c3.metric("保本TACOS", pct(be_tacos))
     c4.metric("目标利润TACOS上限", pct(target_limit))
     st.markdown(
-        f'<div class="decision">广告剩余空间：<span class="{tone_class(room)}">{pp(room)}</span>。{headroom_message(room)}。当前TACOS比目标TACOS{"高" if target_gap >= 0 else "低"}{pp(abs(target_gap))}。</div>',
+        f'<div class="decision">{overview_line(product, breakdown, be_price, target_price, room)}广告剩余空间：<span class="{tone_class(room)}">{pp(room)}</span>。{headroom_message(room)}。当前TACOS比目标TACOS{"高" if target_gap >= 0 else "低"}{pp(abs(target_gap))}。</div>',
         unsafe_allow_html=True,
     )
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("绝对保本售价", money(be_price))
+    c2.metric("目标净利率最低售价", money(target_price))
+    c3.metric("距离保本售价", money(product.price - be_price) if be_price is not None else "无法计算")
+    c4.metric("距离目标利润最低售价", money(product.price - target_price) if target_price is not None else "无法计算")
+    if be_price is not None and product.price < be_price:
+        st.error("当前售价已经低于绝对保本售价。")
     st.caption("月预估销售额 = 当前售价 × 预估销量 × 30；月预估利润 = 单件净利润 × 预估销量 × 30。这是按当前经营状态推算的预估值，不是实际财务利润。")
     end_section()
 
-    section("产品基础档案 / 成本信息")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("采购+包装", f"{yuan(product.purchase_packaging_cny)} → {money(purchase_packaging_usd(product))}")
-    c2.metric("头程", f"{yuan(product.first_leg_cny)} → {money(first_leg_usd(product))}")
-    c3.metric("FBA尾程", money(product.fba_fee))
-    c4.metric("固定成本", money(fixed_cost(product)))
-    st.caption("采购+包装($) = 采购+包装(￥) ÷ 汇率；头程($) = 头程(￥) ÷ 汇率；固定成本($) = 采购+包装($) + 头程($) + FBA尾程($)。")
-    end_section()
-
-    section("成本与利润构成")
+    section("利润与成本")
+    st.caption(
+        f"基础成本来源：采购+包装 {yuan(product.purchase_packaging_cny)} → {money(purchase_packaging_usd(product))}；"
+        f"头程 {yuan(product.first_leg_cny)} → {money(first_leg_usd(product))}；"
+        f"FBA尾程 {money(product.fba_fee)}；固定成本 {money(fixed_cost(product))}。"
+    )
     st.table(
         pd.DataFrame(
             [
@@ -429,19 +479,26 @@ def detail(row: dict) -> None:
         st.write("单件利润率 = 单件净利润 ÷ 售价")
     end_section()
 
-    quick_estimate_block(product)
-
-    section("价格底线")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("当前售价", money(product.price))
-    c2.metric("绝对保本售价", money(be_price))
-    c3.metric("目标净利率最低售价", money(target_price))
-    c1, c2 = st.columns(2)
-    c1.metric("距离保本售价", money(product.price - be_price) if be_price is not None else "无法计算")
-    c2.metric("距离目标利润售价", money(product.price - target_price) if target_price is not None else "无法计算")
-    if be_price is not None and product.price < be_price:
-        st.error("当前售价已经低于绝对保本售价。")
+    section("广告决策")
+    left, right = st.columns([2, 1])
+    with left:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("当前TACOS", pct(product.tacos))
+        c2.metric("目标TACOS", pct(product.target_tacos))
+        c3.metric("当前与目标差值", pp(target_gap))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("保本TACOS", pct(be_tacos))
+        c2.metric("目标利润TACOS上限", pct(target_limit))
+        c3.metric("广告剩余空间", pp(room))
+        st.info(headroom_message(room))
+    with right:
+        target_daily_revenue = st.number_input("目标日销售额($)", min_value=0.0, value=float(round(product.price * product.daily_sales, 2)), step=10.0)
+        target_tacos = st.number_input("目标TACOS(%)", min_value=0.0, value=float(product.target_tacos * 100), step=0.5, key="ad_budget_tacos") / 100
+        st.metric("广告花费参考", f"{money(target_daily_revenue * target_tacos)}/天")
+        st.caption("这是当前销售目标和TACOS下可承受的广告花费，不等于广告活动必须设置的Budget。")
     end_section()
+
+    quick_estimate_block(product)
 
     section("价格模拟")
     low_default = max(0.01, product.price - 3)
@@ -481,26 +538,6 @@ def detail(row: dict) -> None:
     st.dataframe(pd.DataFrame(sim_rows), use_container_width=True, hide_index=True, row_height=42)
     if target_price is not None:
         st.info(f"在当前TACOS下，最低降到{money(target_price)}左右仍可保持{pct(product.target_margin)}目标净利率。")
-    end_section()
-
-    section("广告承受力")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("当前TACOS", pct(product.tacos))
-    c2.metric("目标TACOS", pct(product.target_tacos))
-    c3.metric("当前与目标差值", pp(target_gap))
-    c1, c2, c3 = st.columns(3)
-    c1.metric("保本TACOS", pct(be_tacos))
-    c2.metric("目标利润TACOS上限", pct(target_limit))
-    c3.metric("广告剩余空间", pp(room))
-    st.info(headroom_message(room))
-    end_section()
-
-    section("广告花费参考")
-    c1, c2, c3 = st.columns(3)
-    target_daily_revenue = c1.number_input("目标日销售额($)", min_value=0.0, value=float(round(product.price * product.daily_sales, 2)), step=10.0)
-    target_tacos = c2.number_input("目标TACOS(%)", min_value=0.0, value=float(product.target_tacos * 100), step=0.5, key="ad_budget_tacos") / 100
-    c3.metric("广告花费参考", f"{money(target_daily_revenue * target_tacos)}/天")
-    st.caption("此数值代表该销售目标和TACOS下可承受的广告花费，不等于广告活动必须设置的Budget。")
     end_section()
 
     recommendation_block(product, breakdown, be_price, target_price)
@@ -551,12 +588,7 @@ def main() -> None:
     elif selected_id:
         row = repository.get_product(selected_id)
         if row:
-            with st.sidebar.expander("编辑当前产品档案与经营参数", expanded=False):
-                data = profile_form(row, "保存修改")
-                if data:
-                    repository.update_product(selected_id, data)
-                    st.rerun()
-            detail(row)
+            detail(row, selected_id)
     else:
         st.info("请先在侧边栏新增一个产品。")
 
