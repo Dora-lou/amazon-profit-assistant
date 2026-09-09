@@ -9,6 +9,9 @@
 - 产品基础档案：ASIN、FNSKU、产品名称、采购+包装、头程、FBA尾程、平台佣金、汇率、固定成本
 - 经营参数：售价、销售均价、预估销量、当前TACOS、目标TACOS、目标净利率、退货率、仓储率、阶段、定位
 - 利润快速估算：只输入销售均价、销量、TACOS，快速估算一段时间利润
+- 每日经营数据：按ASIN保存销售均价、Session、销量、广告花费、TACOS和备注
+- 价格变化效果分析：比较最新记录和上一记录，查看CVR、Session、销量、TACOS、利润变化
+- 趋势图：价格与CVR、Session与销量、总利润与TACOS
 - 价格底线和价格模拟：判断促销最低能做到什么价格
 - 广告承受力和广告花费参考：判断TACOS是否过高、广告还有没有空间
 - 导出 Excel：导出当前产品或全部产品利润测算表，便于留档、复盘和发给同事
@@ -95,6 +98,21 @@ create table if not exists products (
   positioning text not null default '增长款',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+create table if not exists daily_records (
+  id uuid primary key default gen_random_uuid(),
+  product_id text not null,
+  record_date date not null,
+  average_sale_price numeric not null default 0,
+  sessions numeric not null default 0,
+  units numeric not null default 0,
+  ad_spend numeric not null default 0,
+  tacos numeric not null default 0,
+  note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(product_id, record_date)
 );
 ```
 

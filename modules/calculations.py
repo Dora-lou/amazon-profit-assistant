@@ -205,6 +205,28 @@ def quick_profit_estimate(product: ProductInput, average_price: float, units: fl
     }
 
 
+def daily_record_metrics(product: ProductInput, record: dict) -> dict:
+    average_price = clamp_non_negative(record.get("average_sale_price"))
+    units = clamp_non_negative(record.get("units"))
+    sessions = clamp_non_negative(record.get("sessions"))
+    tacos = clamp_non_negative(record.get("tacos"))
+    estimate = quick_profit_estimate(product, average_price, units, tacos)
+    estimate["record_date"] = record.get("record_date", "")
+    estimate["sessions"] = sessions
+    estimate["cvr"] = units / sessions if sessions > 0 else 0.0
+    estimate["entered_ad_spend"] = clamp_non_negative(record.get("ad_spend"))
+    estimate["note"] = record.get("note", "") or ""
+    estimate["id"] = record.get("id")
+    return estimate
+
+
+def pct_change(previous: float, current: float) -> float | None:
+    previous_value = float(previous or 0)
+    if previous_value == 0:
+        return None
+    return (float(current or 0) - previous_value) / abs(previous_value)
+
+
 def product_from_row(row: dict) -> ProductInput:
     exchange_rate = row.get("exchange_rate", 7.2)
     purchase_packaging_cny = row.get("purchase_packaging_cny")

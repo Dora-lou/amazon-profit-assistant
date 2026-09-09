@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from modules.calculations import (
     ad_headroom,
     breakeven_price,
     breakeven_tacos,
+    daily_record_metrics,
     estimate_status,
     first_leg_usd,
     fixed_cost,
     headroom_message,
     max_tacos_for_margin,
+    pct_change,
     product_from_row,
     profit_breakdown,
     purchase_packaging_usd,
@@ -93,6 +97,19 @@ def pct(value: float | None) -> str:
 def pp(value: float) -> str:
     sign = "+" if value >= 0 else ""
     return f"{sign}{value * 100:.1f}个百分点"
+
+
+def signed_money(value: float | None) -> str:
+    if value is None:
+        return "无法计算"
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}${abs(value):,.2f}"
+
+
+def count_text(value: float | None) -> str:
+    if value is None:
+        return "无法计算"
+    return f"{value:,.0f}"
 
 
 def tone_class(value: float) -> str:
@@ -307,7 +324,234 @@ def quick_estimate_block(product) -> None:
     end_section()
 
 
-def recommendation_block(product, breakdown: dict, be_price: float | None, target_price: float | None) -> None:
+def format_change(before: float, after: float, is_rate: bool = False, is_money: bool = False) -> str:
+    diff = after - before
+    if is_rate:
+        return pp(diff)
+    change = pct_change(before, after)
+    if is_money:
+        absolute = signed_money(diff)
+    else:
+        sign = "+" if diff >= 0 else ""
+        absolute = f"{sign}{diff:,.0f}"
+    if change is None:
+        return f"{absolute}，无可比百分比"
+    return f"{absolute}，{pp(change)}"
+
+
+def trend_conclusion(previous: dict | None, latest: dict | None) -> str:
+    if not previous or not latest:
+        return "至少录入两条每日数据后，系统会自动判断最近一次价格或经营调整是否有效。"
+    cvr_up = latest["cvr"] > previous["cvr"]
+    units_up = latest["units"] > previous["units"]
+    profit_up = latest["total_net_profit"] > previous["total_net_profit"]
+    tacos_up = latest["tacos"] > previous["tacos"]
+    if cvr_up and units_up and profit_up:
+        return "本次调整后CVR和销量提升，总利润增加，当前调整整体有效。"
+    if units_up and not profit_up:
+        return "销量虽然提升，但总利润下降，当前价格变化没有带来更好的经营收益。"
+    if cvr_up and tacos_up and not profit_up:
+        return "CVR提升明显，但TACOS同时恶化，建议继续观察，不宜立即继续调价。"
+    if profit_up and not tacos_up:
+        return "总利润改善且TACOS未恶化，当前经营方向可以继续观察。"
+    return "最近一次变化效果不明显，建议结合备注中的调价、Coupon或广告动作继续观察。"
+
+
+def history_dataframe(product, records: list[dict]) -> pd.DataFrame:
+    rows = []
+    for record in records:
+        metrics = daily_record_metrics(product, record)
+        rows.append(
+            {
+                "日期": metrics["record_date"],
+                "销售均价": money(metrics["average_price"]),
+                "Session": count_text(metrics["sessions"]),
+                "CVR": pct(metrics["cvr"]),
+                "销量": count_text(metrics["units"]),
+                "广告花费": money(metrics["entered_ad_spend"]),
+                "TACOS": pct(metrics["tacos"]),
+                "销售额": money(metrics["revenue"]),
+                "单件净利润": money(metrics["unit_net_profit"]),
+                "总利润": money(metrics["total_net_profit"]),
+                "净利率": pct(metrics["net_margin"]),
+                "备注": metrics["note"],
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def comparison_dataframe(product, records: list[dict]) -> tuple[pd.DataFrame, dict | None, dict | None]:
+    chronological = sorted(records, key=lambda item: item["record_date"])
+    if len(chronological) < 2:
+        return pd.DataFrame(), None, None
+    previous = daily_record_metrics(product, chronological[-2])
+    latest = daily_record_metrics(product, chronological[-1])
+    rows = [
+        ["销售均价", money(previous["average_price"]), money(latest["average_price"]), format_change(previous["average_price"], latest["average_price"], is_money=True)],
+        ["Session", count_text(previous["sessions"]), count_text(latest["sessions"]), format_change(previous["sessions"], latest["sessions"])],
+        ["CVR", pct(previous["cvr"]), pct(latest["cvr"]), format_change(previous["cvr"], latest["cvr"], is_rate=True)],
+        ["销量", count_text(previous["units"]), count_text(latest["units"]), format_change(previous["units"], latest["units"])],
+        ["广告花费", money(previous["entered_ad_spend"]), money(latest["entered_ad_spend"]), format_change(previous["entered_ad_spend"], latest["entered_ad_spend"], is_money=True)],
+        ["TACOS", pct(previous["tacos"]), pct(latest["tacos"]), format_change(previous["tacos"], latest["tacos"], is_rate=True)],
+        ["单件净利润", money(previous["unit_net_profit"]), money(latest["unit_net_profit"]), format_change(previous["unit_net_profit"], latest["unit_net_profit"], is_money=True)],
+        ["总利润", money(previous["total_net_profit"]), money(latest["total_net_profit"]), format_change(previous["total_net_profit"], latest["total_net_profit"], is_money=True)],
+        ["净利率", pct(previous["net_margin"]), pct(latest["net_margin"]), format_change(previous["net_margin"], latest["net_margin"], is_rate=True)],
+    ]
+    return pd.DataFrame(rows, columns=["指标", "调整前", "调整后", "变化"]), previous, latest
+
+
+def trend_chart(df: pd.DataFrame, title: str, left_col: str, right_col: str, left_name: str, right_name: str, left_fmt: str, right_fmt: str) -> go.Figure:
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    hover = df[["日期", "备注"]].to_numpy()
+    fig.add_trace(
+        go.Scatter(
+            x=df["日期"],
+            y=df[left_col],
+            mode="lines+markers",
+            name=left_name,
+            customdata=hover,
+            hovertemplate=f"日期：%{{customdata[0]}}<br>{left_name}：%{{y:{left_fmt}}}<br>备注：%{{customdata[1]}}<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=df["日期"],
+            y=df[right_col],
+            mode="lines+markers",
+            name=right_name,
+            customdata=hover,
+            hovertemplate=f"日期：%{{customdata[0]}}<br>{right_name}：%{{y:{right_fmt}}}<br>备注：%{{customdata[1]}}<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    if not df.empty:
+        latest = df.iloc[-1]
+        fig.add_trace(
+            go.Scatter(
+                x=[latest["日期"]],
+                y=[latest[left_col]],
+                mode="markers",
+                marker={"size": 12, "symbol": "circle-open"},
+                name="最新记录",
+                hoverinfo="skip",
+            ),
+            secondary_y=False,
+        )
+    fig.update_layout(
+        title=title,
+        height=300,
+        margin={"l": 30, "r": 30, "t": 44, "b": 20},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+    )
+    fig.update_xaxes(title_text="日期")
+    fig.update_yaxes(title_text=left_name, secondary_y=False)
+    fig.update_yaxes(title_text=right_name, secondary_y=True)
+    return fig
+
+
+def daily_data_block(product, product_id) -> list[dict]:
+    section("每日经营数据 / 价格变化效果分析")
+    records = repository.list_daily_records(product_id)
+    st.caption("每日数据保存在当前ASIN下，用于判断调价、Coupon、Deal或广告调整后的真实效果。")
+
+    with st.expander("新增每日经营数据", expanded=not records):
+        with st.form(f"daily_record_form_{product_id}"):
+            c1, c2, c3, c4 = st.columns(4)
+            record_date = c1.date_input("日期")
+            average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"daily_avg_{product_id}")
+            sessions = c3.number_input("Session", min_value=0.0, value=0.0, step=10.0, key=f"daily_sessions_{product_id}")
+            units = c4.number_input("销量(件)", min_value=0.0, value=0.0, step=1.0, key=f"daily_units_{product_id}")
+            c1, c2 = st.columns(2)
+            ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"daily_ad_{product_id}")
+            tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key=f"daily_tacos_{product_id}") / 100
+            note = st.text_input("备注", placeholder="调价 / Coupon / Deal / 广告预算调整 / Listing调整 / 其它动作")
+            if st.form_submit_button("保存每日数据", type="primary"):
+                repository.upsert_daily_record(
+                    {
+                        "product_id": str(product_id),
+                        "record_date": record_date.isoformat(),
+                        "average_sale_price": average_price,
+                        "sessions": sessions,
+                        "units": units,
+                        "ad_spend": ad_spend,
+                        "tacos": tacos,
+                        "note": note.strip(),
+                    }
+                )
+                st.rerun()
+
+    if records:
+        edit_options = {record["id"]: f"{record['record_date']} · {record.get('note') or '无备注'}" for record in records}
+        with st.expander("编辑 / 删除历史记录", expanded=False):
+            record_id = st.selectbox("选择记录", list(edit_options.keys()), format_func=lambda item: edit_options[item])
+            selected = next(record for record in records if record["id"] == record_id)
+            with st.form(f"edit_daily_record_{record_id}"):
+                c1, c2, c3, c4 = st.columns(4)
+                record_date = c1.date_input("日期", value=pd.to_datetime(selected["record_date"]).date(), key=f"edit_date_{record_id}")
+                average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(selected["average_sale_price"]), step=0.01, key=f"edit_avg_{record_id}")
+                sessions = c3.number_input("Session", min_value=0.0, value=float(selected["sessions"]), step=10.0, key=f"edit_sessions_{record_id}")
+                units = c4.number_input("销量(件)", min_value=0.0, value=float(selected["units"]), step=1.0, key=f"edit_units_{record_id}")
+                c1, c2 = st.columns(2)
+                ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=float(selected["ad_spend"]), step=1.0, key=f"edit_ad_{record_id}")
+                tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(selected["tacos"] * 100), step=0.1, key=f"edit_tacos_{record_id}") / 100
+                note = st.text_input("备注", value=selected.get("note") or "", key=f"edit_note_{record_id}")
+                c1, c2 = st.columns(2)
+                save = c1.form_submit_button("保存修改")
+                delete = c2.form_submit_button("删除记录")
+                payload = {
+                    "product_id": str(product_id),
+                    "record_date": record_date.isoformat(),
+                    "average_sale_price": average_price,
+                    "sessions": sessions,
+                    "units": units,
+                    "ad_spend": ad_spend,
+                    "tacos": tacos,
+                    "note": note.strip(),
+                }
+                if save:
+                    repository.update_daily_record(record_id, payload)
+                    st.rerun()
+                if delete:
+                    repository.delete_daily_record(record_id)
+                    st.rerun()
+
+        comparison, previous, latest = comparison_dataframe(product, records)
+        if not comparison.empty:
+            st.markdown("**最新阶段 vs 上一阶段**")
+            st.dataframe(comparison, use_container_width=True, hide_index=True, row_height=40)
+            st.info(trend_conclusion(previous, latest))
+        else:
+            st.info("已保存1条每日数据。再录入1条后，会自动生成最新阶段 vs 上一阶段对比。")
+
+        history = history_dataframe(product, records)
+        st.markdown("**历史记录**")
+        st.dataframe(history, use_container_width=True, hide_index=True, row_height=40)
+
+        chart_df = pd.DataFrame([daily_record_metrics(product, record) for record in records]).sort_values("record_date")
+        chart_df = chart_df.rename(
+            columns={
+                "record_date": "日期",
+                "average_price": "销售均价",
+                "sessions": "Session",
+                "units": "销量",
+                "entered_ad_spend": "广告花费",
+                "total_net_profit": "总利润",
+                "tacos": "TACOS",
+                "note": "备注",
+                "cvr": "CVR",
+            }
+        )
+        st.plotly_chart(trend_chart(chart_df, "价格与CVR趋势", "销售均价", "CVR", "销售均价", "CVR", "$,.2f", ".1%"), use_container_width=True)
+        st.plotly_chart(trend_chart(chart_df, "Session与销量趋势", "Session", "销量", "Session", "销量", ",.0f", ",.0f"), use_container_width=True)
+        st.plotly_chart(trend_chart(chart_df, "总利润与TACOS趋势", "总利润", "TACOS", "总利润", "TACOS", "$,.2f", ".1%"), use_container_width=True)
+    else:
+        st.info("还没有每日经营数据。先录入一条，用来开始跟踪价格变化和运营调整效果。")
+    end_section()
+    return records
+
+
+def recommendation_block(product, breakdown: dict, be_price: float | None, target_price: float | None, records: list[dict] | None = None) -> None:
     section("当前经营建议")
     target_limit = max_tacos_for_margin(product, product.target_margin)
     be_tacos = breakeven_tacos(product)
@@ -349,6 +593,15 @@ def recommendation_block(product, breakdown: dict, be_price: float | None, targe
         profit_text = "清库存可接近保本，但需要清楚知道最低可接受售价。"
     else:
         profit_text = f"当前净利率{pct(breakdown['net_margin'])}，目标净利率{pct(product.target_margin)}。"
+
+    if records and len(records) >= 2:
+        chronological = sorted(records, key=lambda item: item["record_date"])
+        previous = daily_record_metrics(product, chronological[-2])
+        latest = daily_record_metrics(product, chronological[-1])
+        if latest["total_net_profit"] < previous["total_net_profit"] and latest["units"] >= previous["units"]:
+            profit_text = "最近销量没有变差，但总利润下降，先确认调价或广告动作是否压缩了利润。"
+        elif latest["total_net_profit"] > previous["total_net_profit"] and latest["tacos"] <= previous["tacos"]:
+            profit_text = "最近总利润改善且TACOS未恶化，当前调整可以继续观察。"
 
     st.write(f"价格：{price_text}")
     st.write(f"广告：{ad_text}")
@@ -398,7 +651,7 @@ def detail(row: dict, selected_id) -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    with st.expander("编辑产品档案 / 经营参数", expanded=False):
+    with st.expander("编辑产品档案", expanded=False):
         data = profile_form(row, "保存修改")
         if data:
             repository.update_product(selected_id, data)
@@ -499,6 +752,7 @@ def detail(row: dict, selected_id) -> None:
     end_section()
 
     quick_estimate_block(product)
+    records = daily_data_block(product, selected_id)
 
     section("价格模拟")
     low_default = max(0.01, product.price - 3)
@@ -540,7 +794,7 @@ def detail(row: dict, selected_id) -> None:
         st.info(f"在当前TACOS下，最低降到{money(target_price)}左右仍可保持{pct(product.target_margin)}目标净利率。")
     end_section()
 
-    recommendation_block(product, breakdown, be_price, target_price)
+    recommendation_block(product, breakdown, be_price, target_price, records)
 
 
 def main() -> None:

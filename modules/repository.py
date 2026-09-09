@@ -32,6 +32,17 @@ PRODUCT_FIELDS = [
     "positioning",
 ]
 
+DAILY_RECORD_FIELDS = [
+    "product_id",
+    "record_date",
+    "average_sale_price",
+    "sessions",
+    "units",
+    "ad_spend",
+    "tacos",
+    "note",
+]
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS products (
@@ -56,6 +67,21 @@ CREATE TABLE IF NOT EXISTS products (
     positioning TEXT NOT NULL DEFAULT '增长款',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS daily_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id TEXT NOT NULL,
+    record_date TEXT NOT NULL,
+    average_sale_price REAL NOT NULL DEFAULT 0,
+    sessions REAL NOT NULL DEFAULT 0,
+    units REAL NOT NULL DEFAULT 0,
+    ad_spend REAL NOT NULL DEFAULT 0,
+    tacos REAL NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(product_id, record_date)
 );
 """
 
@@ -149,6 +175,18 @@ class ProductRepository(Protocol):
     def duplicate_product(self, product_id: int | str) -> int | str | None:
         ...
 
+    def list_daily_records(self, product_id: int | str) -> list[dict]:
+        ...
+
+    def upsert_daily_record(self, data: dict) -> int | str:
+        ...
+
+    def update_daily_record(self, record_id: int | str, data: dict) -> None:
+        ...
+
+    def delete_daily_record(self, record_id: int | str) -> None:
+        ...
+
 
 def clean_product_data(data: dict) -> dict:
     return {key: data.get(key) for key in PRODUCT_FIELDS}
@@ -164,6 +202,18 @@ def normalize_row(row: dict) -> dict:
     normalized.setdefault("target_tacos", 0.2)
     for key in PRODUCT_FIELDS:
         normalized.setdefault(key, "" if key in {"asin", "fnsku", "name", "stage", "positioning"} else 0)
+    return normalized
+
+
+def clean_daily_record_data(data: dict) -> dict:
+    return {key: data.get(key) for key in DAILY_RECORD_FIELDS}
+
+
+def normalize_daily_record(row: dict) -> dict:
+    normalized = dict(row)
+    normalized.setdefault("note", "")
+    for key in DAILY_RECORD_FIELDS:
+        normalized.setdefault(key, "" if key in {"product_id", "record_date", "note"} else 0)
     return normalized
 
 
@@ -264,6 +314,7 @@ class SQLiteProductRepository:
 
     def delete_product(self, product_id: int | str) -> None:
         with self.get_connection() as conn:
+            conn.execute("DELETE FROM daily_records WHERE product_id = ?", (str(product_id),))
             conn.execute("DELETE FROM products WHERE id = ?", (product_id,))
 
     def duplicate_product(self, product_id: int | str) -> int | None:
@@ -275,6 +326,52 @@ class SQLiteProductRepository:
         product["fnsku"] = f"{product.get('fnsku') or ''}-COPY".strip("-")
         product["name"] = f"{product['name']} - 复制"
         return self.insert_product(product)
+
+    def list_daily_records(self, product_id: int | str) -> list[dict]:
+        self.init_db()
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM daily_records WHERE product_id = ? ORDER BY record_date DESC, id DESC",
+                (str(product_id),),
+            ).fetchall()
+        return [normalize_daily_record(dict(row)) for row in rows]
+
+    def upsert_daily_record(self, data: dict) -> int:
+        payload = clean_daily_record_data(data)
+        keys = list(payload.keys())
+        values = [payload[key] for key in keys]
+        placeholders = ", ".join(["?"] * len(keys))
+        updates = ", ".join(f"{key} = excluded.{key}" for key in keys if key not in {"product_id", "record_date"})
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                f"""
+                INSERT INTO daily_records ({', '.join(keys)})
+                VALUES ({placeholders})
+                ON CONFLICT(product_id, record_date) DO UPDATE SET
+                    {updates},
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                values,
+            )
+            record = conn.execute(
+                "SELECT id FROM daily_records WHERE product_id = ? AND record_date = ?",
+                (payload["product_id"], payload["record_date"]),
+            ).fetchone()
+        return int(record["id"] if record else cur.lastrowid)
+
+    def update_daily_record(self, record_id: int | str, data: dict) -> None:
+        payload = clean_daily_record_data(data)
+        assignments = ", ".join(f"{key} = ?" for key in payload.keys())
+        values = [payload[key] for key in payload.keys()]
+        with self.get_connection() as conn:
+            conn.execute(
+                f"UPDATE daily_records SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                values + [record_id],
+            )
+
+    def delete_daily_record(self, record_id: int | str) -> None:
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM daily_records WHERE id = ?", (record_id,))
 
 
 class SupabaseProductRepository:
@@ -310,6 +407,7 @@ class SupabaseProductRepository:
         self.table.update(clean_product_data(data)).eq("id", product_id).execute()
 
     def delete_product(self, product_id: int | str) -> None:
+        self.client.table("daily_records").delete().eq("product_id", str(product_id)).execute()
         self.table.delete().eq("id", product_id).execute()
 
     def duplicate_product(self, product_id: int | str) -> str | None:
@@ -321,6 +419,31 @@ class SupabaseProductRepository:
         product["fnsku"] = f"{product.get('fnsku') or ''}-COPY".strip("-")
         product["name"] = f"{product['name']} - 复制"
         return self.insert_product(product)
+
+    def list_daily_records(self, product_id: int | str) -> list[dict]:
+        result = (
+            self.client.table("daily_records")
+            .select("*")
+            .eq("product_id", str(product_id))
+            .order("record_date", desc=True)
+            .execute()
+        )
+        return [normalize_daily_record(row) for row in result.data]
+
+    def upsert_daily_record(self, data: dict) -> str:
+        payload = clean_daily_record_data(data)
+        result = (
+            self.client.table("daily_records")
+            .upsert(payload, on_conflict="product_id,record_date")
+            .execute()
+        )
+        return result.data[0]["id"]
+
+    def update_daily_record(self, record_id: int | str, data: dict) -> None:
+        self.client.table("daily_records").update(clean_daily_record_data(data)).eq("id", record_id).execute()
+
+    def delete_daily_record(self, record_id: int | str) -> None:
+        self.client.table("daily_records").delete().eq("id", record_id).execute()
 
 
 def _secret_value(name: str) -> str | None:
