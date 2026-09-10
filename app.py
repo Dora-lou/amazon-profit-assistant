@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -146,6 +147,39 @@ def status_order(label: str) -> int:
     return 0 if label.startswith("🔴") else 1 if label.startswith("🟡") else 2
 
 
+def simulation_status_class(label: str) -> str:
+    if label.startswith("🟢"):
+        return "good"
+    if label.startswith("🟡"):
+        return "watch"
+    return "risk"
+
+
+def simulation_status_text(label: str) -> str:
+    return label.replace("🟢 ", "").replace("🟡 ", "").replace("🔴 ", "")
+
+
+def simulation_table(sim: list[dict]) -> str:
+    headers = ["售价", "单件毛利润", "毛利率", "保本TACOS", "目标毛利率TACOS上限", "状态"]
+    head_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    rows_html = []
+    for item in sim:
+        current_class = " current-price" if item["当前售价"] else ""
+        state_class = simulation_status_class(item["状态"])
+        state_text = simulation_status_text(item["状态"])
+        rows_html.append(
+            f'<tr class="{current_class}">'
+            f'<td class="money-cell">{escape(money(item["售价"]))}{"<span class=\'current-mark\'>当前</span>" if item["当前售价"] else ""}</td>'
+            f'<td class="money-cell {"negative" if item["单件毛利润"] < 0 else "positive"}">{escape(money(item["单件毛利润"]))}</td>'
+            f'<td class="number-cell">{escape(pct(item["毛利率"]))}</td>'
+            f'<td class="number-cell">{escape(pct(item["保本TACOS"]))}</td>'
+            f'<td class="number-cell">{escape(pct(item["目标毛利率TACOS上限"]))}</td>'
+            f'<td><span class="sim-status-pill {state_class}">{escape(state_text)}</span></td>'
+            "</tr>"
+        )
+    return f'<div class="simulation-table-wrap"><table class="simulation-table"><thead><tr>{head_html}</tr></thead><tbody>{"".join(rows_html)}</tbody></table></div>'
+
+
 def overview(products: list[dict]) -> None:
     st.title("Amazon 多产品利润与经营决策助手")
     st.caption("看全局：快速判断哪个产品贡献利润，哪个产品需要优先处理。")
@@ -175,27 +209,55 @@ def overview(products: list[dict]) -> None:
 
 
 def quick_estimate(product, key_prefix: str) -> None:
-    section("经营快速测算", "使用已经发生的销售均价、销量和 TACOS / 广告花费，快速核算阶段毛利润。")
-    c1, c2, c3, c4 = st.columns(4); period = c1.selectbox("时间范围备注", ["昨日", "近7天", "近14天", "近30天", "自定义"], key=f"{key_prefix}_period"); average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"{key_prefix}_price"); units = c3.number_input("销量(件)", min_value=0.0, value=float(max(product.daily_sales, 1)), step=1.0, key=f"{key_prefix}_units"); mode = c4.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"{key_prefix}_mode")
-    if mode == "输入TACOS":
-        tacos = st.number_input("TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1, key=f"{key_prefix}_tacos") / 100; ad_spend = None
-    else:
-        ad_spend = st.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_ad"); tacos = None
+    section("经营快速测算", "只输入销售均价、销量和 TACOS / 广告花费，快速核算阶段毛利润。")
+    input_col, result_col = st.columns([0.95, 1.45], gap="large")
+    with input_col:
+        period = st.selectbox("时间范围备注", ["昨日", "近7天", "近14天", "近30天", "自定义"], key=f"{key_prefix}_period")
+        average_price = st.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"{key_prefix}_price")
+        units = st.number_input("销量(件)", min_value=0.0, value=float(max(product.daily_sales, 1)), step=1.0, key=f"{key_prefix}_units")
+        mode = st.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"{key_prefix}_mode")
+        if mode == "输入TACOS":
+            tacos = st.number_input("TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1, key=f"{key_prefix}_tacos") / 100
+            ad_spend = None
+        else:
+            ad_spend = st.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_ad")
+            tacos = None
     estimate = estimate_with_ad_input(product, average_price, units, tacos, ad_spend)
     if show_warnings(input_warnings(product, units=units, tacos=estimate["tacos"], ad_spend=ad_spend)): return
-    c1, c2, c3, c4 = st.columns(4); c1.metric("销售额", money(estimate["revenue"])); c2.metric("广告花费", money(estimate["ad_spend"])); c3.metric("单件毛利润", money(estimate["unit_net_profit"])); c4.metric("总毛利润", money(estimate["total_net_profit"]))
-    c1, c2, c3 = st.columns(3); c1.metric("毛利率", pct(estimate["net_margin"])); c2.metric("目标毛利率", pct(product.target_margin)); c3.metric("目标差值", pp(estimate["net_margin"] - product.target_margin)); st.markdown(f"**{period}测算状态：{estimate_status(estimate['total_net_profit'], estimate['net_margin'], product.target_margin)}**")
+    with result_col:
+        st.markdown('<div class="tool-result-heading">本次测算结果</div>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2); c1.metric("销售额", money(estimate["revenue"])); c2.metric("广告花费", money(estimate["ad_spend"]))
+        c1, c2 = st.columns(2); c1.metric("单件毛利润", money(estimate["unit_net_profit"])); c2.metric("总毛利润", money(estimate["total_net_profit"]))
+        c1, c2 = st.columns(2); c1.metric("毛利率", pct(estimate["net_margin"])); c2.metric("目标差值", pp(estimate["net_margin"] - product.target_margin))
+        st.markdown(f'<div class="tool-status-line">{escape(period)}测算状态：<strong>{escape(estimate_status(estimate["total_net_profit"], estimate["net_margin"], product.target_margin))}</strong></div>', unsafe_allow_html=True)
 
 
 def price_simulation(product, key_prefix: str) -> None:
-    section("价格模拟", "主要决策区：查看改价、促销价或恢复原价后的毛利润结构。")
-    c1, c2, c3 = st.columns(3); low = c1.number_input("最低模拟价格($)", min_value=0.01, value=max(0.01, round(product.price - 3, 2)), step=0.5, key=f"{key_prefix}_low"); high = c2.number_input("最高模拟价格($)", min_value=0.01, value=round(product.price + 3, 2), step=0.5, key=f"{key_prefix}_high"); step = c3.number_input("价格间隔($)", min_value=0.01, value=1.0, step=0.25, key=f"{key_prefix}_step")
+    section("价格模拟", "调整价格、经营参数，看看结果会怎样。")
+    control_col, result_col = st.columns([0.32, 0.68], gap="large")
+    with control_col:
+        with st.container(border=True):
+            st.markdown('<div class="sim-card-heading">参数控制</div><div class="sim-card-caption">设置范围后生成价格决策结果</div>', unsafe_allow_html=True)
+            st.metric("当前售价", money(product.price))
+            low = st.number_input("最低模拟售价($)", min_value=0.01, value=max(0.01, round(product.price - 3, 2)), step=0.5, key=f"{key_prefix}_low")
+            high = st.number_input("最高模拟售价($)", min_value=0.01, value=round(product.price + 3, 2), step=0.5, key=f"{key_prefix}_high")
+            step = st.number_input("价格间隔($)", min_value=0.01, value=1.0, step=0.25, key=f"{key_prefix}_step")
+            st.number_input("当前TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1, disabled=True, key=f"{key_prefix}_current_tacos")
+            st.number_input("目标毛利率(%)", min_value=0.0, max_value=100.0, value=float(product.target_margin * 100), step=0.5, disabled=True, key=f"{key_prefix}_target_margin")
+            st.button("生成模拟结果", type="primary", width="stretch", key=f"{key_prefix}_generate")
     prices = []; current = high
     while current >= low - 1e-9 and len(prices) < 300: prices.append(round(current, 2)); current -= step
     prices = sorted(set(prices + [round(product.price, 2)]), reverse=True); sim = []
     for price in prices:
         bd = profit_breakdown(product, price=price); max_tacos = max_tacos_for_margin(product, product.target_margin, price=price); sim.append({"售价": price, "单件毛利润": bd["net_profit"], "毛利率": bd["net_margin"], "保本TACOS": breakeven_tacos(product, price), "目标毛利率TACOS上限": max_tacos, "状态": simulation_status(bd["net_profit"], bd["net_margin"], product.target_margin), "当前售价": abs(price - product.price) < 0.001})
-    chart_metric = st.radio("价格图表指标", ["毛利润", "毛利率", "目标毛利率TACOS上限"], horizontal=True, key=f"{key_prefix}_chart_metric"); y_key = {"毛利润": "单件毛利润", "毛利率": "毛利率", "目标毛利率TACOS上限": "目标毛利率TACOS上限"}[chart_metric]
+    with result_col:
+        with st.container(border=True):
+            st.markdown('<div class="sim-card-heading">模拟结果</div><div class="sim-card-caption">当前售价用蓝色标记，状态标签只强调运营结论</div>', unsafe_allow_html=True)
+            st.markdown(simulation_table(sim), unsafe_allow_html=True)
+            st.markdown('<div class="chart-card-heading">价格趋势</div><div class="chart-card-caption">观察价格变化对毛利润、毛利率和广告承受力的影响</div>', unsafe_allow_html=True)
+            chart_metric = st.radio("价格图表指标", ["毛利润", "毛利率", "目标毛利率TACOS上限"], horizontal=True, key=f"{key_prefix}_chart_metric")
+            y_key = {"毛利润": "单件毛利润", "毛利率": "毛利率", "目标毛利率TACOS上限": "目标毛利率TACOS上限"}[chart_metric]
+            st.markdown(f'<div class="chart-selection">当前指标：<strong>{escape(chart_metric)}</strong></div>', unsafe_allow_html=True)
     fig = go.Figure(go.Scatter(
         x=[item["售价"] for item in sim],
         y=[item[y_key] for item in sim],
@@ -219,16 +281,24 @@ def price_simulation(product, key_prefix: str) -> None:
         yaxis={"title": chart_metric, "gridcolor": "#edf1f5", "zerolinecolor": "#edf1f5"},
         showlegend=False,
     )
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False, "displaylogo": False})
-    table = [{"售价": f"{'★ ' if item['当前售价'] else ''}{money(item['售价'])}", "单件毛利润": money(item["单件毛利润"]), "毛利率": pct(item["毛利率"]), "保本TACOS": pct(item["保本TACOS"]), "目标毛利率TACOS上限": pct(item["目标毛利率TACOS上限"]), "状态": item["状态"]} for item in sim]; st.dataframe(pd.DataFrame(table), width="stretch", hide_index=True)
+    with result_col:
+        with st.container(border=True):
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False, "displaylogo": False})
     target_price = target_margin_price(product)
     if target_price is not None: st.info(f"在当前 TACOS 下，最低约为 {money(target_price)} 时可保持 {pct(product.target_margin)} 目标毛利率。")
 
 
 def ad_budget_reference(product, key_prefix: str) -> None:
     section("广告预算参考", "这是经营目标对应的广告花费参考，不等于广告 Campaign 必须设置的 Budget。")
-    c1, c2, c3 = st.columns(3); revenue = c1.number_input("目标日销售额($)", min_value=0.0, value=round(product.price * product.daily_sales, 2), step=10.0, key=f"{key_prefix}_revenue"); target_tacos = c2.number_input("目标TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.target_tacos * 100), step=0.5, key=f"{key_prefix}_tacos") / 100; current = c3.number_input("当前广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_current")
-    reference = revenue * target_tacos; c1, c2 = st.columns(2); c1.metric("可承受广告花费", f"{money(reference)}/天"); c2.metric("当前花费比目标范围", signed_money(current - reference))
+    input_col, result_col = st.columns([1.15, 0.85], gap="large")
+    with input_col:
+        c1, c2, c3 = st.columns(3)
+        revenue = c1.number_input("目标日销售额($)", min_value=0.0, value=round(product.price * product.daily_sales, 2), step=10.0, key=f"{key_prefix}_revenue")
+        target_tacos = c2.number_input("目标TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.target_tacos * 100), step=0.5, key=f"{key_prefix}_tacos") / 100
+        current = c3.number_input("当前广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_current")
+    reference = revenue * target_tacos
+    with result_col:
+        c1, c2 = st.columns(2); c1.metric("可承受广告花费", f"{money(reference)}/天"); c2.metric("当前与目标差额", signed_money(reference - current))
 
 
 def product_header(product, row: dict, selected_id, all_products: list[dict]) -> None:
@@ -301,7 +371,15 @@ def overview_tab(product, row: dict, selected_id) -> None:
 
 
 def simulation_tab(product, selected_id) -> None:
-    price_simulation(product, f"sim_{selected_id}"); quick_estimate(product, f"estimate_{selected_id}"); ad_budget_reference(product, f"budget_{selected_id}")
+    st.markdown('<div class="simulation-intro">调整价格、经营参数，看看结果会怎样。</div>', unsafe_allow_html=True)
+    price_simulation(product, f"sim_{selected_id}")
+    lower_left, lower_right = st.columns([1.55, 1], gap="large")
+    with lower_left:
+        with st.container(border=True):
+            quick_estimate(product, f"estimate_{selected_id}")
+    with lower_right:
+        with st.container(border=True):
+            ad_budget_reference(product, f"budget_{selected_id}")
 
 
 def format_change(before: float, after: float, is_rate: bool = False, is_money: bool = False) -> str:
