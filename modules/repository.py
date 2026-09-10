@@ -15,6 +15,7 @@ PRODUCT_FIELDS = [
     "asin",
     "fnsku",
     "name",
+    "fixed_cost_usd",
     "purchase_packaging_cny",
     "first_leg_cny",
     "fba_fee",
@@ -41,6 +42,10 @@ DAILY_RECORD_FIELDS = [
     "ad_spend",
     "tacos",
     "note",
+    "snapshot_fixed_cost_usd",
+    "snapshot_commission_rate",
+    "snapshot_storage_rate",
+    "snapshot_return_rate",
 ]
 
 
@@ -50,6 +55,7 @@ CREATE TABLE IF NOT EXISTS products (
     asin TEXT NOT NULL,
     fnsku TEXT,
     name TEXT NOT NULL,
+    fixed_cost_usd REAL NOT NULL DEFAULT 0,
     purchase_packaging_cny REAL NOT NULL DEFAULT 0,
     first_leg_cny REAL NOT NULL DEFAULT 0,
     fba_fee REAL NOT NULL DEFAULT 0,
@@ -79,6 +85,10 @@ CREATE TABLE IF NOT EXISTS daily_records (
     ad_spend REAL NOT NULL DEFAULT 0,
     tacos REAL NOT NULL DEFAULT 0,
     note TEXT,
+    snapshot_fixed_cost_usd REAL,
+    snapshot_commission_rate REAL,
+    snapshot_storage_rate REAL,
+    snapshot_return_rate REAL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(product_id, record_date)
@@ -91,6 +101,7 @@ SAMPLE_PRODUCTS = [
         "asin": "B0DEMO001",
         "fnsku": "X003KDO001",
         "name": "Kitchen Drawer Organizer",
+        "fixed_cost_usd": 10.85,
         "purchase_packaging_cny": 47.88,
         "first_leg_cny": 8.28,
         "fba_fee": 3.05,
@@ -111,6 +122,7 @@ SAMPLE_PRODUCTS = [
         "asin": "B0DEMO002",
         "fnsku": "X003STB004",
         "name": "Silicone Travel Bottles",
+        "fixed_cost_usd": 7.08,
         "purchase_packaging_cny": 25.78,
         "first_leg_cny": 5.18,
         "fba_fee": 2.78,
@@ -131,6 +143,7 @@ SAMPLE_PRODUCTS = [
         "asin": "B0DEMO003",
         "fnsku": "X003PGG002",
         "name": "Pet Grooming Glove",
+        "fixed_cost_usd": 9.30,
         "purchase_packaging_cny": 35.42,
         "first_leg_cny": 7.06,
         "fba_fee": 3.40,
@@ -234,6 +247,7 @@ class SQLiteProductRepository:
         with self.get_connection() as conn:
             conn.executescript(SCHEMA)
             self._migrate_legacy_columns(conn)
+            self._migrate_daily_columns(conn)
             count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
             if count == 0:
                 for product in SAMPLE_PRODUCTS:
@@ -248,12 +262,27 @@ class SQLiteProductRepository:
             "exchange_rate": "REAL NOT NULL DEFAULT 7.2",
             "average_sale_price": "REAL NOT NULL DEFAULT 0",
             "target_tacos": "REAL NOT NULL DEFAULT 0.2",
+            "fixed_cost_usd": "REAL NOT NULL DEFAULT 0",
         }
         for column, definition in additions.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
 
         legacy = {row["name"] for row in conn.execute("PRAGMA table_info(products)").fetchall()}
+        if "fixed_cost_usd" in legacy and {"purchase_packaging_cny", "first_leg_cny", "fba_fee"}.issubset(legacy):
+            conn.execute(
+                """
+                UPDATE products
+                SET fixed_cost_usd = CASE
+                    WHEN COALESCE(fixed_cost_usd, 0) <= 0 THEN
+                        COALESCE(purchase_packaging_cny, 0) / CASE WHEN COALESCE(exchange_rate, 0) > 0 THEN exchange_rate ELSE 7.2 END
+                        + COALESCE(first_leg_cny, 0) / CASE WHEN COALESCE(exchange_rate, 0) > 0 THEN exchange_rate ELSE 7.2 END
+                        + COALESCE(fba_fee, 0)
+                    ELSE fixed_cost_usd
+                END
+                """
+            )
+
         if {"purchase_cost", "packaging_cost", "first_leg_cost", "sku"}.issubset(legacy):
             conn.execute(
                 """
@@ -275,6 +304,17 @@ class SQLiteProductRepository:
                 """
             )
 
+    def _migrate_daily_columns(self, conn: sqlite3.Connection) -> None:
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(daily_records)").fetchall()}
+        additions = {
+            "snapshot_fixed_cost_usd": "REAL",
+            "snapshot_commission_rate": "REAL",
+            "snapshot_storage_rate": "REAL",
+            "snapshot_return_rate": "REAL",
+        }
+        for column, definition in additions.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE daily_records ADD COLUMN {column} {definition}")
     def list_products(self) -> list[dict]:
         self.init_db()
         with self.get_connection() as conn:

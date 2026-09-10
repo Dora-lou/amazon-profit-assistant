@@ -11,6 +11,7 @@ class ProductInput:
     asin: str = ""
     fnsku: str = ""
     name: str = ""
+    fixed_cost_usd: float = 0.0
     purchase_packaging_cny: float = 0.0
     first_leg_cny: float = 0.0
     fba_fee: float = 0.0
@@ -45,6 +46,8 @@ def first_leg_usd(product: ProductInput) -> float:
 
 
 def fixed_cost(product: ProductInput) -> float:
+    if clamp_non_negative(product.fixed_cost_usd) > 0:
+        return clamp_non_negative(product.fixed_cost_usd)
     return purchase_packaging_usd(product) + first_leg_usd(product) + clamp_non_negative(product.fba_fee)
 
 
@@ -166,12 +169,23 @@ def target_margin_price(product: ProductInput) -> float | None:
     return price_for_margin(product, product.target_margin)
 
 
-def quick_profit_estimate(product: ProductInput, average_price: float, units: float, tacos: float) -> dict:
+def quick_profit_estimate(
+    product: ProductInput,
+    average_price: float,
+    units: float,
+    tacos: float | None = None,
+    ad_spend: float | None = None,
+) -> dict:
     avg_price = clamp_non_negative(average_price)
     unit_count = clamp_non_negative(units)
-    tacos_rate = clamp_non_negative(tacos)
     revenue = avg_price * unit_count
-    ad_spend = revenue * tacos_rate
+    entered_ad_spend = clamp_non_negative(ad_spend)
+    if tacos is None and revenue > 0:
+        tacos_rate = entered_ad_spend / revenue
+    else:
+        tacos_rate = clamp_non_negative(tacos)
+        if ad_spend is None:
+            entered_ad_spend = revenue * tacos_rate
     unit_commission = avg_price * clamp_non_negative(product.commission_rate)
     total_commission = unit_commission * unit_count
     unit_storage = avg_price * clamp_non_negative(product.storage_rate)
@@ -191,7 +205,7 @@ def quick_profit_estimate(product: ProductInput, average_price: float, units: fl
         "units": unit_count,
         "tacos": tacos_rate,
         "revenue": revenue,
-        "ad_spend": ad_spend,
+        "ad_spend": entered_ad_spend,
         "unit_commission": unit_commission,
         "total_commission": total_commission,
         "unit_storage": unit_storage,
@@ -209,12 +223,24 @@ def daily_record_metrics(product: ProductInput, record: dict) -> dict:
     average_price = clamp_non_negative(record.get("average_sale_price"))
     units = clamp_non_negative(record.get("units"))
     sessions = clamp_non_negative(record.get("sessions"))
+    snapshot = {
+        "fixed_cost_usd": record.get("snapshot_fixed_cost_usd"),
+        "commission_rate": record.get("snapshot_commission_rate"),
+        "storage_rate": record.get("snapshot_storage_rate"),
+        "return_rate": record.get("snapshot_return_rate"),
+    }
+    historical_product = product
+    if all(value is not None for value in snapshot.values()):
+        historical_product = ProductInput(**{**product.__dict__, **snapshot})
     tacos = clamp_non_negative(record.get("tacos"))
-    estimate = quick_profit_estimate(product, average_price, units, tacos)
+    recorded_ad_spend = record.get("ad_spend")
+    if clamp_non_negative(recorded_ad_spend) == 0 and tacos > 0:
+        recorded_ad_spend = None
+    estimate = quick_profit_estimate(historical_product, average_price, units, tacos=tacos, ad_spend=recorded_ad_spend)
     estimate["record_date"] = record.get("record_date", "")
     estimate["sessions"] = sessions
     estimate["cvr"] = units / sessions if sessions > 0 else 0.0
-    estimate["entered_ad_spend"] = clamp_non_negative(record.get("ad_spend"))
+    estimate["entered_ad_spend"] = estimate["ad_spend"]
     estimate["note"] = record.get("note", "") or ""
     estimate["id"] = record.get("id")
     return estimate
@@ -242,6 +268,7 @@ def product_from_row(row: dict) -> ProductInput:
         asin=row.get("asin", "") or "",
         fnsku=row.get("fnsku") or row.get("sku", "") or "",
         name=row.get("name", "") or "",
+        fixed_cost_usd=row.get("fixed_cost_usd") or 0,
         purchase_packaging_cny=purchase_packaging_cny,
         first_leg_cny=first_leg_cny,
         fba_fee=row.get("fba_fee", 0),

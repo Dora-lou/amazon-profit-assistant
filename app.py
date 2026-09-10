@@ -11,14 +11,12 @@ from modules.calculations import (
     breakeven_tacos,
     daily_record_metrics,
     estimate_status,
-    first_leg_usd,
     fixed_cost,
     headroom_message,
     max_tacos_for_margin,
     pct_change,
     product_from_row,
     profit_breakdown,
-    purchase_packaging_usd,
     quick_profit_estimate,
     simulation_status,
     status,
@@ -120,6 +118,33 @@ def tone_class(value: float) -> str:
     return "positive"
 
 
+def input_warnings(product, *, sessions: float | None = None, units: float | None = None, tacos: float | None = None, ad_spend: float | None = None) -> list[str]:
+    warnings = []
+    if product.fixed_cost_usd <= 0:
+        warnings.append("固定成本为空或小于等于0")
+    if product.price <= 0:
+        warnings.append("售价小于等于0")
+    for label, value in [("平台佣金率", product.commission_rate), ("TACOS", product.tacos), ("目标TACOS", product.target_tacos), ("退货率", product.return_rate), ("仓储率", product.storage_rate)]:
+        if value > 1:
+            warnings.append(f"{label}超过100%")
+    if product.daily_sales < 0 or (units is not None and units < 0):
+        warnings.append("销量不能为负数")
+    if sessions is not None and units is not None and sessions < units:
+        warnings.append("Session不能小于销量")
+    if ad_spend is not None and ad_spend < 0:
+        warnings.append("广告花费不能为负数")
+    if tacos is not None and tacos > 1:
+        warnings.append("TACOS超过100%")
+    return warnings
+
+
+def show_warnings(warnings: list[str]) -> bool:
+    if warnings:
+        st.error("请检查输入数据：" + "；".join(warnings))
+        return True
+    return False
+
+
 def section(title: str):
     st.markdown(f'<div class="section"><h3>{title}</h3>', unsafe_allow_html=True)
 
@@ -131,32 +156,15 @@ def end_section() -> None:
 def profile_form(defaults: dict, button_label: str) -> dict | None:
     product = product_from_row(defaults)
     with st.form(button_label):
-        st.markdown("**产品基础档案**")
         c1, c2, c3 = st.columns(3)
         asin = c1.text_input("ASIN", product.asin)
         fnsku = c2.text_input("FNSKU", product.fnsku)
         name = c3.text_input("产品名称", product.name)
-
         c1, c2, c3, c4 = st.columns(4)
-        purchase_packaging_cny = c1.number_input("采购+包装(￥)", min_value=0.0, value=float(product.purchase_packaging_cny), step=1.0)
-        first_leg_cny = c2.number_input("头程(￥)", min_value=0.0, value=float(product.first_leg_cny), step=1.0)
-        fba_fee = c3.number_input("FBA尾程($)", min_value=0.0, value=float(product.fba_fee), step=0.01)
-        exchange_rate = c4.number_input("汇率", min_value=0.0001, value=float(product.exchange_rate), step=0.01)
-
-        preview = product_from_row(
-            {
-                **defaults,
-                "purchase_packaging_cny": purchase_packaging_cny,
-                "first_leg_cny": first_leg_cny,
-                "fba_fee": fba_fee,
-                "exchange_rate": exchange_rate,
-            }
-        )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("采购+包装($)", money(purchase_packaging_usd(preview)))
-        c2.metric("头程($)", money(first_leg_usd(preview)))
-        c3.metric("固定成本($)", money(fixed_cost(preview)))
-        commission_rate = c4.number_input("平台佣金(%)", min_value=0.0, value=float(product.commission_rate * 100), step=0.1) / 100
+        fixed_cost_usd = c1.number_input("固定成本($/件)", min_value=0.0, value=float(fixed_cost(product)), step=0.01)
+        commission_rate = c2.number_input("平台佣金率(%)", min_value=0.0, value=float(product.commission_rate * 100), step=0.1) / 100
+        storage_rate = c3.number_input("仓储率(%)", min_value=0.0, value=float(product.storage_rate * 100), step=0.1) / 100
+        return_rate = c4.number_input("退货率(%)", min_value=0.0, value=float(product.return_rate * 100), step=0.1) / 100
 
         st.markdown("**经营参数**")
         c1, c2, c3, c4 = st.columns(4)
@@ -168,9 +176,6 @@ def profile_form(defaults: dict, button_label: str) -> dict | None:
         c1, c2, c3, c4 = st.columns(4)
         target_tacos = c1.number_input("目标TACOS(%)", min_value=0.0, value=float(product.target_tacos * 100), step=0.1) / 100
         target_margin = c2.number_input("目标净利率(%)", min_value=0.0, value=float(product.target_margin * 100), step=0.5) / 100
-        return_rate = c3.number_input("退货率(%)", min_value=0.0, value=float(product.return_rate * 100), step=0.1) / 100
-        storage_rate = c4.number_input("仓储率(%)", min_value=0.0, value=float(product.storage_rate * 100), step=0.1) / 100
-
         c1, c2 = st.columns(2)
         stage = c1.selectbox("产品阶段", STAGES, index=STAGES.index(product.stage) if product.stage in STAGES else 1)
         positioning = c2.selectbox("产品定位", POSITIONS, index=POSITIONS.index(product.positioning) if product.positioning in POSITIONS else 1)
@@ -178,15 +183,12 @@ def profile_form(defaults: dict, button_label: str) -> dict | None:
         submitted = st.form_submit_button(button_label, type="primary")
         if not submitted:
             return None
-        return {
+        payload = {
             "asin": asin.strip() or "UNSET-ASIN",
             "fnsku": fnsku.strip(),
             "name": name.strip() or "未命名产品",
-            "purchase_packaging_cny": purchase_packaging_cny,
-            "first_leg_cny": first_leg_cny,
-            "fba_fee": fba_fee,
+            "fixed_cost_usd": fixed_cost_usd,
             "commission_rate": commission_rate,
-            "exchange_rate": exchange_rate,
             "price": price,
             "average_sale_price": average_sale_price,
             "daily_sales": daily_sales,
@@ -198,6 +200,9 @@ def profile_form(defaults: dict, button_label: str) -> dict | None:
             "stage": stage,
             "positioning": positioning,
         }
+        if show_warnings(input_warnings(product_from_row(payload))):
+            return None
+        return payload
 
 
 def overview(products: list[dict]) -> None:
@@ -293,8 +298,18 @@ def quick_estimate_block(product) -> None:
     period = c1.selectbox("时间范围备注", PERIODS)
     average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01)
     units = c3.number_input("销量(件)", min_value=0.0, value=float(max(product.daily_sales, 1)), step=1.0)
-    tacos = c4.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key="estimate_tacos") / 100
-    estimate = quick_profit_estimate(product, average_price, units, tacos)
+    mode = c4.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key="estimate_ad_mode")
+    c1, c2 = st.columns(2)
+    if mode == "输入TACOS":
+        tacos = c1.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key="estimate_tacos") / 100
+        ad_spend = None
+    else:
+        ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key="estimate_ad_spend")
+        tacos = None
+    estimate = quick_profit_estimate(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
+    if show_warnings(input_warnings(product, units=units, tacos=estimate["tacos"], ad_spend=ad_spend)):
+        end_section()
+        return
     gap = estimate["net_margin"] - product.target_margin
     est_status = estimate_status(estimate["total_net_profit"], estimate["net_margin"], product.target_margin)
 
@@ -463,10 +478,18 @@ def daily_data_block(product, product_id) -> list[dict]:
             sessions = c3.number_input("Session", min_value=0.0, value=0.0, step=10.0, key=f"daily_sessions_{product_id}")
             units = c4.number_input("销量(件)", min_value=0.0, value=0.0, step=1.0, key=f"daily_units_{product_id}")
             c1, c2 = st.columns(2)
-            ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"daily_ad_{product_id}")
-            tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key=f"daily_tacos_{product_id}") / 100
+            ad_mode = c1.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"daily_ad_mode_{product_id}")
+            if ad_mode == "输入TACOS":
+                tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key=f"daily_tacos_{product_id}") / 100
+                ad_spend = average_price * units * tacos
+            else:
+                ad_spend = c2.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"daily_ad_{product_id}")
+                tacos = ad_spend / (average_price * units) if average_price * units > 0 else 0.0
             note = st.text_input("备注", placeholder="调价 / Coupon / Deal / 广告预算调整 / Listing调整 / 其它动作")
             if st.form_submit_button("保存每日数据", type="primary"):
+                warnings = input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)
+                if show_warnings(warnings):
+                    st.stop()
                 repository.upsert_daily_record(
                     {
                         "product_id": str(product_id),
@@ -477,6 +500,10 @@ def daily_data_block(product, product_id) -> list[dict]:
                         "ad_spend": ad_spend,
                         "tacos": tacos,
                         "note": note.strip(),
+                        "snapshot_fixed_cost_usd": product.fixed_cost_usd or fixed_cost(product),
+                        "snapshot_commission_rate": product.commission_rate,
+                        "snapshot_storage_rate": product.storage_rate,
+                        "snapshot_return_rate": product.return_rate,
                     }
                 )
                 st.rerun()
@@ -493,8 +520,13 @@ def daily_data_block(product, product_id) -> list[dict]:
                 sessions = c3.number_input("Session", min_value=0.0, value=float(selected["sessions"]), step=10.0, key=f"edit_sessions_{record_id}")
                 units = c4.number_input("销量(件)", min_value=0.0, value=float(selected["units"]), step=1.0, key=f"edit_units_{record_id}")
                 c1, c2 = st.columns(2)
-                ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=float(selected["ad_spend"]), step=1.0, key=f"edit_ad_{record_id}")
-                tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(selected["tacos"] * 100), step=0.1, key=f"edit_tacos_{record_id}") / 100
+                ad_mode = c1.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"edit_ad_mode_{record_id}")
+                if ad_mode == "输入TACOS":
+                    tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(selected["tacos"] * 100), step=0.1, key=f"edit_tacos_{record_id}") / 100
+                    ad_spend = average_price * units * tacos
+                else:
+                    ad_spend = c2.number_input("广告花费($)", min_value=0.0, value=float(selected["ad_spend"]), step=1.0, key=f"edit_ad_{record_id}")
+                    tacos = ad_spend / (average_price * units) if average_price * units > 0 else 0.0
                 note = st.text_input("备注", value=selected.get("note") or "", key=f"edit_note_{record_id}")
                 c1, c2 = st.columns(2)
                 save = c1.form_submit_button("保存修改")
@@ -510,6 +542,15 @@ def daily_data_block(product, product_id) -> list[dict]:
                     "note": note.strip(),
                 }
                 if save:
+                    warnings = input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)
+                    if show_warnings(warnings):
+                        st.stop()
+                    payload.update({
+                        "snapshot_fixed_cost_usd": selected.get("snapshot_fixed_cost_usd") or product.fixed_cost_usd or fixed_cost(product),
+                        "snapshot_commission_rate": selected.get("snapshot_commission_rate") if selected.get("snapshot_commission_rate") is not None else product.commission_rate,
+                        "snapshot_storage_rate": selected.get("snapshot_storage_rate") if selected.get("snapshot_storage_rate") is not None else product.storage_rate,
+                        "snapshot_return_rate": selected.get("snapshot_return_rate") if selected.get("snapshot_return_rate") is not None else product.return_rate,
+                    })
                     repository.update_daily_record(record_id, payload)
                     st.rerun()
                 if delete:
@@ -623,6 +664,7 @@ def overview_line(product, breakdown: dict, be_price: float | None, target_price
 
 def detail(row: dict, selected_id) -> None:
     product = product_from_row(row)
+    show_warnings(input_warnings(product))
     breakdown = profit_breakdown(product)
     target_limit = max_tacos_for_margin(product, product.target_margin)
     room = ad_headroom(product)
@@ -704,16 +746,12 @@ def detail(row: dict, selected_id) -> None:
     end_section()
 
     section("利润与成本")
-    st.caption(
-        f"基础成本来源：采购+包装 {yuan(product.purchase_packaging_cny)} → {money(purchase_packaging_usd(product))}；"
-        f"头程 {yuan(product.first_leg_cny)} → {money(first_leg_usd(product))}；"
-        f"FBA尾程 {money(product.fba_fee)}；固定成本 {money(fixed_cost(product))}。"
-    )
+    st.caption(f"当前使用的固定成本：{money(fixed_cost(product))} / 件；基础参数最后更新：{row.get('updated_at') or '未知'}。")
     st.table(
         pd.DataFrame(
             [
                 ["售价", money(product.price), "当前售价"],
-                ["固定成本", f"-{money(breakdown['fixed_cost'])}", "采购+包装($) + 头程($) + FBA尾程($)"],
+                ["固定成本", f"-{money(breakdown['fixed_cost'])}", "产品基础参数中直接填写的固定成本"],
                 ["平台佣金", f"-{money(breakdown['commission'])}", f"{money(product.price)} × {pct(product.commission_rate)}"],
                 ["广告成本", f"-{money(breakdown['ad_cost'])}", f"{money(product.price)} × {pct(product.tacos)}"],
                 ["仓储预留", f"-{money(breakdown['storage_reserve'])}", f"{money(product.price)} × {pct(product.storage_rate)}"],

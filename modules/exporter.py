@@ -11,12 +11,10 @@ from openpyxl.utils import get_column_letter
 from modules.calculations import (
     breakeven_price,
     breakeven_tacos,
-    first_leg_usd,
     fixed_cost,
     max_tacos_for_margin,
     product_from_row,
     profit_breakdown,
-    purchase_packaging_usd,
     target_margin_price,
 )
 
@@ -25,21 +23,15 @@ EXPORT_COLUMNS = [
     ("产品名称", "text"),
     ("ASIN", "text"),
     ("FNSKU", "text"),
-    ("采购+包装(￥)", "cny"),
-    ("头程(￥)", "cny"),
-    ("采购+包装($)", "usd"),
-    ("头程($)", "usd"),
-    ("FBA尾程($)", "usd"),
-    ("平台佣金(%)", "pct"),
-    ("汇率", "num"),
     ("固定成本($)", "usd"),
+    ("平台佣金(%)", "pct"),
+    ("仓储率(%)", "pct"),
+    ("退货率(%)", "pct"),
     ("划线价 / 当前售价($)", "usd"),
     ("预估销量(件)", "num0"),
     ("当前TACOS", "pct"),
     ("目标TACOS", "pct"),
     ("目标净利率", "pct"),
-    ("退货率(%)", "pct"),
-    ("仓储率(%)", "pct"),
     ("单件净利($)", "usd"),
     ("单件利润率(%)", "pct"),
     ("保本TACOS", "pct"),
@@ -71,21 +63,15 @@ def row_values(row: dict) -> list:
         product.name,
         product.asin,
         product.fnsku,
-        product.purchase_packaging_cny,
-        product.first_leg_cny,
-        purchase_packaging_usd(product),
-        first_leg_usd(product),
-        product.fba_fee,
-        product.commission_rate,
-        product.exchange_rate,
         fixed_cost(product),
+        product.commission_rate,
+        product.storage_rate,
+        product.return_rate,
         product.price,
         product.daily_sales,
         product.tacos,
         product.target_tacos,
         product.target_margin,
-        product.return_rate,
-        product.storage_rate,
         breakdown["net_profit"],
         breakdown["net_margin"],
         breakeven_tacos(product),
@@ -111,10 +97,10 @@ def build_profit_workbook(products: list[dict]) -> bytes:
     positive_font = Font(color="008000")
     negative_font = Font(color="C00000")
 
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=11)
-    ws.merge_cells(start_row=1, start_column=12, end_row=1, end_column=20)
-    ws.merge_cells(start_row=1, start_column=21, end_row=1, end_column=26)
-    group_titles = [(1, "1. 成本", "cost"), (12, "2. 日常经营 / 利润", "ops"), (21, "3. 经营决策", "decision")]
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=7)
+    ws.merge_cells(start_row=1, start_column=8, end_row=1, end_column=14)
+    ws.merge_cells(start_row=1, start_column=15, end_row=1, end_column=20)
+    group_titles = [(1, "1. 成本", "cost"), (8, "2. 日常经营 / 利润", "ops"), (15, "3. 经营决策", "decision")]
     for col, title, key in group_titles:
         cell = ws.cell(row=1, column=col, value=title)
         cell.fill = group_fill[key]
