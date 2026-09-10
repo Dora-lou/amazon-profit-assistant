@@ -313,7 +313,7 @@ def product_header(product, row: dict, selected_id, all_products: list[dict]) ->
             unsafe_allow_html=True,
         )
         if middle.button("编辑基础参数", key=f"open_editor_{selected_id}"):
-            st.session_state[f"editor_open_{selected_id}"] = True
+            st.session_state[f"profile_editor_open_{selected_id}"] = True
             st.rerun()
         middle.download_button(
             "导出当前产品",
@@ -330,6 +330,15 @@ def product_header(product, row: dict, selected_id, all_products: list[dict]) ->
             key=f"export_all_{selected_id}",
         )
         right.caption(f"最后更新时间：{row.get('updated_at') or '未知'}")
+
+
+def profile_editor(row: dict, selected_id) -> None:
+    expanded = st.session_state.pop(f"profile_editor_open_{selected_id}", False)
+    with st.expander("编辑基础参数", expanded=expanded):
+        data = profile_form(row, "保存基础参数", f"edit_profile_{selected_id}")
+        if data:
+            repository.update_product(selected_id, data)
+            st.rerun()
 
 
 def overview_tab(product, row: dict, selected_id) -> None:
@@ -364,9 +373,6 @@ def overview_tab(product, row: dict, selected_id) -> None:
     c1, c2, c3, c4 = st.columns(4); c1.metric("当前售价", money(product.price)); c2.metric("预估销量", f"{product.daily_sales:.0f} 件/日"); c3.metric("月预估销售额", money(bd["monthly_revenue"])); c4.metric("月预估毛利润", money(bd["monthly_profit"]))
     c1, c2, c3, c4 = st.columns(4); c1.metric("当前TACOS", pct(product.tacos)); c2.metric("目标TACOS", pct(product.target_tacos)); c3.metric("保本TACOS", pct(be_tacos)); c4.metric("目标毛利率TACOS上限", pct(limit))
     c1, c2, c3, c4 = st.columns(4); c1.metric("绝对保本售价", money(be_price)); c2.metric("目标毛利率最低售价", money(target_price)); c3.metric("距离保本价", signed_money(product.price - be_price if be_price is not None else None)); c4.metric("距离目标毛利率价格", signed_money(product.price - target_price if target_price is not None else None))
-    with st.expander("编辑基础参数", expanded=st.session_state.pop(f"editor_open_{selected_id}", False)):
-        data = profile_form(row, "保存基础参数", f"edit_profile_{selected_id}")
-        if data: repository.update_product(selected_id, data); st.rerun()
     st.caption(f"基础参数最后更新：{row.get('updated_at') or '未知'}")
 
 
@@ -506,6 +512,7 @@ def detail(row: dict, selected_id, all_products: list[dict]) -> None:
     product = product_from_row(row); warnings = input_warnings(product)
     if warnings: st.error("请检查输入数据：" + "；".join(warnings))
     product_header(product, row, selected_id, all_products)
+    profile_editor(row, selected_id)
     c1, c2 = st.columns([1.1, 1.9])
     if parent_asin_of(product):
         view = c1.radio("分析视角", ["子ASIN视角", "父ASIN视角"], horizontal=True, key=f"view_{selected_id}")
