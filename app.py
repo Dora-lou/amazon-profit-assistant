@@ -25,7 +25,23 @@ st.set_page_config(page_title="Amazon 多产品利润与经营决策助手", lay
 
 def load_styles() -> None:
     stylesheet = Path(__file__).resolve().parent / "assets" / "style.css"
-    st.markdown(f"<style>{stylesheet.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+    try:
+        css = stylesheet.read_text(encoding="utf-8") if stylesheet.exists() else ""
+    except OSError:
+        css = ""
+    if not css:
+        css = """
+        :root { --ink:#1f2a44; --page:#f6f8fb; --line:#e5e9f0; --blue:#2f80ed; }
+        html, body, [data-testid=stAppViewContainer] { background:var(--page); }
+        .block-container { max-width:1420px; padding:28px 34px 64px; }
+        h1, h2, h3, h4 { color:var(--ink); letter-spacing:0; }
+        div[data-testid=stMetric] { background:#fff; border:1px solid var(--line); border-radius:12px; padding:14px 16px; min-height:92px; }
+        div[data-testid=stMetricValue] { color:var(--ink); font-size:27px; }
+        [data-testid=stTabs] [role=tab] { flex:1; min-height:82px; border:1px solid var(--line); border-radius:13px; background:#fff; color:var(--ink); font-weight:700; }
+        [data-testid=stTabs] [role=tab][aria-selected=true] { background:var(--blue); border-color:var(--blue); color:#fff; }
+        [data-testid=stDataFrame], [data-testid=stPlotlyChart] { border:1px solid var(--line); border-radius:12px; background:#fff; }
+        """
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 load_styles()

@@ -1,0 +1,375 @@
+:root {
+  --navy: #17324d;
+  --ink: #1f2a44;
+  --muted: #718096;
+  --blue: #2f80ed;
+  --blue-soft: #eef5ff;
+  --page: #f6f8fb;
+  --card: #ffffff;
+  --line: #e5e9f0;
+  --green: #16805b;
+  --green-soft: #eefaf4;
+  --yellow: #b7791f;
+  --yellow-soft: #fff8e8;
+  --red: #c2414b;
+  --red-soft: #fff1f2;
+}
+
+html, body, [data-testid="stAppViewContainer"] {
+  background: var(--page);
+}
+
+[data-testid="stHeader"] {
+  background: var(--page);
+}
+
+.block-container {
+  max-width: 1420px;
+  padding: 28px 34px 64px;
+}
+
+h1, h2, h3, h4 {
+  color: var(--ink);
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: 30px !important;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
+
+[data-testid="stCaptionContainer"] {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+section[data-testid="stSidebar"] {
+  background: var(--navy);
+  min-width: 232px;
+  max-width: 232px;
+}
+
+section[data-testid="stSidebar"] > div {
+  background: var(--navy);
+  padding: 22px 16px;
+}
+
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3,
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+  color: #e7eff8;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] > label {
+  color: #9fb3c8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+  gap: 7px;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"] {
+  border-radius: 9px;
+  min-height: 42px;
+  padding: 0 12px;
+  color: #d7e4f1;
+  transition: background .15s ease, color .15s ease;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"]:hover {
+  background: rgba(255,255,255,.09);
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 5px 14px rgba(47,128,237,.22);
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] input {
+  position: absolute;
+  opacity: 0;
+}
+
+section[data-testid="stSidebar"] [data-testid="stSelectbox"] > label,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  color: #d7e4f1 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stExpander"] {
+  border-color: rgba(255,255,255,.14);
+  background: rgba(255,255,255,.04);
+}
+
+section[data-testid="stSidebar"] [data-testid="stButton"] button {
+  background: rgba(255,255,255,.09);
+  border-color: rgba(255,255,255,.18);
+  color: #eef6ff;
+}
+
+.side-brand {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.35;
+  padding: 0 6px 18px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255,255,255,.13);
+}
+
+.side-brand small {
+  display: block;
+  color: #9fb3c8;
+  font-size: 11px;
+  font-weight: 500;
+  margin-top: 5px;
+}
+
+.side-section-label {
+  color: #8da5bd;
+  font-size: 11px;
+  letter-spacing: .08em;
+  margin: 20px 6px 8px;
+}
+
+.side-faux-item {
+  color: #cbd9e7;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 14px;
+  margin: 4px 0;
+}
+
+.product-header,
+[data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: 0 2px 8px rgba(31,42,68,.025);
+}
+
+.product-header {
+  padding: 20px 22px;
+  margin-bottom: 18px;
+}
+
+.product-header-name {
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+
+.product-header-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.status-pill,
+.data-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.status-good { color: var(--green); background: var(--green-soft); }
+.status-watch { color: var(--yellow); background: var(--yellow-soft); }
+.status-risk { color: var(--red); background: var(--red-soft); }
+
+.decision-banner {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--blue);
+  border-radius: 12px;
+  padding: 15px 18px;
+  margin: 6px 0 24px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.decision-banner.good { background: var(--green-soft); border-left-color: var(--green); }
+.decision-banner.watch { background: var(--yellow-soft); border-left-color: var(--yellow); }
+.decision-banner.risk { background: var(--red-soft); border-left-color: var(--red); }
+
+.module-title {
+  color: var(--ink);
+  font-size: 21px;
+  font-weight: 750;
+  line-height: 1.3;
+  border: 0;
+  padding: 0;
+  margin: 28px 0 12px;
+}
+
+.module-title + [data-testid="stCaptionContainer"] {
+  margin-top: -6px;
+  margin-bottom: 14px;
+}
+
+div[data-testid="stMetric"] {
+  min-height: 92px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 2px 7px rgba(31,42,68,.025);
+}
+
+div[data-testid="stMetricLabel"] p {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: normal;
+}
+
+div[data-testid="stMetricValue"] {
+  color: var(--ink);
+  font-size: 27px;
+  line-height: 1.25;
+}
+
+[data-testid="stTabs"] [role="tablist"] {
+  gap: 12px;
+  border-bottom: 0;
+  margin: 12px 0 22px;
+}
+
+[data-testid="stTabs"] [role="tab"] {
+  flex: 1;
+  min-height: 82px;
+  padding: 15px 18px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--ink);
+  white-space: pre-wrap;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+[data-testid="stTabs"] [role="tab"]:hover {
+  border-color: #b9d4f8;
+  color: var(--blue);
+}
+
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+  color: #fff;
+  background: linear-gradient(135deg, #2f80ed, #4f9bf3);
+  border-color: #2f80ed;
+  box-shadow: 0 7px 16px rgba(47,128,237,.22);
+}
+
+[data-testid="stTabs"] [role="tab"] [data-testid="stMarkdownContainer"] p {
+  margin: 0;
+}
+
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+[data-testid="stDataFrame"] [role="columnheader"] {
+  background: #f3f6fa;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+[data-testid="stDataFrame"] [role="gridcell"] {
+  min-height: 38px;
+}
+
+[data-testid="stPlotlyChart"] {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+}
+
+[data-testid="stExpander"] {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stDateInput"] input {
+  border-color: var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+button[kind="primary"],
+[data-testid="stDownloadButton"] button {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+  border-radius: 9px;
+}
+
+button[kind="secondary"],
+[data-testid="stButton"] button {
+  border-radius: 9px;
+}
+
+[data-testid="stRadio"] [role="radiogroup"] {
+  gap: 8px;
+}
+
+[data-testid="stRadio"] [data-testid="stRadioOption"] {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 6px 12px;
+  background: #fff;
+}
+
+[data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .block-container { padding: 20px 16px 48px; }
+  section[data-testid="stSidebar"] { min-width: 210px; max-width: 210px; }
+  [data-testid="stTabs"] [role="tablist"] { gap: 8px; }
+  [data-testid="stTabs"] [role="tab"] { min-height: 70px; padding: 12px; font-size: 14px; }
+  .product-header-name { font-size: 21px; }
+}
+
+/* Streamlit renders the sidebar menu as a radio group; visually turn it into navigation. */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"] {
+  background: transparent !important;
+  color: #d7e4f1 !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"] * {
+  color: inherit !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--blue) !important;
+  color: #fff !important;
+}
+
+section[data-testid="stSidebar"] label[data-testid="stRadioOption"] > div > div > div:first-child,
+section[data-testid="stSidebar"] label[data-testid="stRadioOption"] > div > div > div:first-child > div {
+  display: none !important;
+  background: transparent !important;
+}
