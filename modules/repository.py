@@ -12,6 +12,7 @@ DB_PATH = DATABASE_DIR / "amazon_profit.db"
 
 
 PRODUCT_FIELDS = [
+    "parent_asin",
     "asin",
     "fnsku",
     "name",
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS products (
     asin TEXT NOT NULL,
     fnsku TEXT,
     name TEXT NOT NULL,
+    parent_asin TEXT NOT NULL DEFAULT '',
     fixed_cost_usd REAL NOT NULL DEFAULT 0,
     purchase_packaging_cny REAL NOT NULL DEFAULT 0,
     first_leg_cny REAL NOT NULL DEFAULT 0,
@@ -202,7 +204,9 @@ class ProductRepository(Protocol):
 
 
 def clean_product_data(data: dict) -> dict:
-    return {key: data.get(key) for key in PRODUCT_FIELDS}
+    payload = {key: data.get(key) for key in PRODUCT_FIELDS}
+    payload["parent_asin"] = data.get("parent_asin") or ""
+    return payload
 
 
 def normalize_row(row: dict) -> dict:
@@ -263,6 +267,7 @@ class SQLiteProductRepository:
             "average_sale_price": "REAL NOT NULL DEFAULT 0",
             "target_tacos": "REAL NOT NULL DEFAULT 0.2",
             "fixed_cost_usd": "REAL NOT NULL DEFAULT 0",
+            "parent_asin": "TEXT NOT NULL DEFAULT ''",
         }
         for column, definition in additions.items():
             if column not in existing:

@@ -21,6 +21,7 @@ from modules.calculations import (
 
 EXPORT_COLUMNS = [
     ("产品名称", "text"),
+    ("Parent ASIN", "text"),
     ("ASIN", "text"),
     ("FNSKU", "text"),
     ("固定成本($)", "usd"),
@@ -61,6 +62,7 @@ def row_values(row: dict) -> list:
     breakdown = profit_breakdown(product)
     return [
         product.name,
+        product.parent_asin,
         product.asin,
         product.fnsku,
         fixed_cost(product),
@@ -97,10 +99,10 @@ def build_profit_workbook(products: list[dict]) -> bytes:
     positive_font = Font(color="008000")
     negative_font = Font(color="C00000")
 
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=7)
-    ws.merge_cells(start_row=1, start_column=8, end_row=1, end_column=14)
-    ws.merge_cells(start_row=1, start_column=15, end_row=1, end_column=20)
-    group_titles = [(1, "1. 成本", "cost"), (8, "2. 日常经营 / 利润", "ops"), (15, "3. 经营决策", "decision")]
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+    ws.merge_cells(start_row=1, start_column=9, end_row=1, end_column=15)
+    ws.merge_cells(start_row=1, start_column=16, end_row=1, end_column=21)
+    group_titles = [(1, "1. 成本", "cost"), (9, "2. 日常经营 / 利润", "ops"), (16, "3. 经营决策", "decision")]
     for col, title, key in group_titles:
         cell = ws.cell(row=1, column=col, value=title)
         cell.fill = group_fill[key]

@@ -8,6 +8,7 @@ RETURN_COMMISSION_FACTOR = 0.20
 
 @dataclass
 class ProductInput:
+    parent_asin: str = ""
     asin: str = ""
     fnsku: str = ""
     name: str = ""
@@ -266,6 +267,7 @@ def product_from_row(row: dict) -> ProductInput:
         first_leg_cny = clamp_non_negative(row.get("first_leg_cost")) * clamp_non_negative(exchange_rate)
 
     return ProductInput(
+        parent_asin=row.get("parent_asin", "") or "",
         asin=row.get("asin", "") or "",
         fnsku=row.get("fnsku") or row.get("sku", "") or "",
         name=row.get("name", "") or "",
