@@ -123,6 +123,17 @@ def stored_fixed_cost(product) -> float:
     return float(getattr(product, "fixed_cost_usd", 0) or fixed_cost(product))
 
 
+def estimate_with_ad_input(product, average_price: float, units: float, tacos: float | None, ad_spend: float | None) -> dict:
+    """Keep one release of compatibility for a cloud app with stale calculation modules."""
+    if tacos is None:
+        revenue = average_price * units
+        tacos = ad_spend / revenue if ad_spend is not None and revenue > 0 else 0.0
+    try:
+        return quick_profit_estimate(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
+    except TypeError:
+        return quick_profit_estimate(product, average_price, units, tacos)
+
+
 def input_warnings(product, *, sessions: float | None = None, units: float | None = None, tacos: float | None = None, ad_spend: float | None = None) -> list[str]:
     warnings = []
     if stored_fixed_cost(product) <= 0:
@@ -311,7 +322,7 @@ def quick_estimate_block(product) -> None:
     else:
         ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key="estimate_ad_spend")
         tacos = None
-    estimate = quick_profit_estimate(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
+    estimate = estimate_with_ad_input(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
     if show_warnings(input_warnings(product, units=units, tacos=estimate["tacos"], ad_spend=ad_spend)):
         end_section()
         return
