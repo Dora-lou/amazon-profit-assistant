@@ -46,8 +46,9 @@ def first_leg_usd(product: ProductInput) -> float:
 
 
 def fixed_cost(product: ProductInput) -> float:
-    if clamp_non_negative(product.fixed_cost_usd) > 0:
-        return clamp_non_negative(product.fixed_cost_usd)
+    direct_cost = clamp_non_negative(getattr(product, "fixed_cost_usd", 0))
+    if direct_cost > 0:
+        return direct_cost
     return purchase_packaging_usd(product) + first_leg_usd(product) + clamp_non_negative(product.fba_fee)
 
 

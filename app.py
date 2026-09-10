@@ -118,9 +118,14 @@ def tone_class(value: float) -> str:
     return "positive"
 
 
+def stored_fixed_cost(product) -> float:
+    """Support one-release mixed deployments while Streamlit Cloud reloads modules."""
+    return float(getattr(product, "fixed_cost_usd", 0) or fixed_cost(product))
+
+
 def input_warnings(product, *, sessions: float | None = None, units: float | None = None, tacos: float | None = None, ad_spend: float | None = None) -> list[str]:
     warnings = []
-    if product.fixed_cost_usd <= 0:
+    if stored_fixed_cost(product) <= 0:
         warnings.append("固定成本为空或小于等于0")
     if product.price <= 0:
         warnings.append("售价小于等于0")
@@ -161,7 +166,7 @@ def profile_form(defaults: dict, button_label: str) -> dict | None:
         fnsku = c2.text_input("FNSKU", product.fnsku)
         name = c3.text_input("产品名称", product.name)
         c1, c2, c3, c4 = st.columns(4)
-        fixed_cost_usd = c1.number_input("固定成本($/件)", min_value=0.0, value=float(fixed_cost(product)), step=0.01)
+        fixed_cost_usd = c1.number_input("固定成本($/件)", min_value=0.0, value=stored_fixed_cost(product), step=0.01)
         commission_rate = c2.number_input("平台佣金率(%)", min_value=0.0, value=float(product.commission_rate * 100), step=0.1) / 100
         storage_rate = c3.number_input("仓储率(%)", min_value=0.0, value=float(product.storage_rate * 100), step=0.1) / 100
         return_rate = c4.number_input("退货率(%)", min_value=0.0, value=float(product.return_rate * 100), step=0.1) / 100
@@ -500,7 +505,7 @@ def daily_data_block(product, product_id) -> list[dict]:
                         "ad_spend": ad_spend,
                         "tacos": tacos,
                         "note": note.strip(),
-                        "snapshot_fixed_cost_usd": product.fixed_cost_usd or fixed_cost(product),
+                        "snapshot_fixed_cost_usd": stored_fixed_cost(product),
                         "snapshot_commission_rate": product.commission_rate,
                         "snapshot_storage_rate": product.storage_rate,
                         "snapshot_return_rate": product.return_rate,
@@ -546,7 +551,7 @@ def daily_data_block(product, product_id) -> list[dict]:
                     if show_warnings(warnings):
                         st.stop()
                     payload.update({
-                        "snapshot_fixed_cost_usd": selected.get("snapshot_fixed_cost_usd") or product.fixed_cost_usd or fixed_cost(product),
+                        "snapshot_fixed_cost_usd": selected.get("snapshot_fixed_cost_usd") or stored_fixed_cost(product),
                         "snapshot_commission_rate": selected.get("snapshot_commission_rate") if selected.get("snapshot_commission_rate") is not None else product.commission_rate,
                         "snapshot_storage_rate": selected.get("snapshot_storage_rate") if selected.get("snapshot_storage_rate") is not None else product.storage_rate,
                         "snapshot_return_rate": selected.get("snapshot_return_rate") if selected.get("snapshot_return_rate") is not None else product.return_rate,
