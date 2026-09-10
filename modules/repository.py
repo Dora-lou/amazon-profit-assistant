@@ -204,7 +204,32 @@ class ProductRepository(Protocol):
 
 
 def clean_product_data(data: dict) -> dict:
-    payload = {key: data.get(key) for key in PRODUCT_FIELDS}
+    defaults = {
+        "parent_asin": "",
+        "asin": "UNSET-ASIN",
+        "fnsku": "",
+        "name": "未命名产品",
+        "fixed_cost_usd": 0.0,
+        "purchase_packaging_cny": 0.0,
+        "first_leg_cny": 0.0,
+        "fba_fee": 0.0,
+        "commission_rate": 0.15,
+        "exchange_rate": 7.2,
+        "price": 0.0,
+        "average_sale_price": 0.0,
+        "daily_sales": 0.0,
+        "tacos": 0.2,
+        "target_tacos": 0.2,
+        "target_margin": 0.12,
+        "return_rate": 0.08,
+        "storage_rate": 0.02,
+        "stage": "成长期",
+        "positioning": "增长款",
+    }
+    payload = {
+        key: defaults[key] if data.get(key) is None else data.get(key)
+        for key in PRODUCT_FIELDS
+    }
     payload["parent_asin"] = data.get("parent_asin") or ""
     return payload
 

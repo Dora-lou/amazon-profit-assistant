@@ -83,6 +83,7 @@ create table if not exists products (
   asin text not null,
   fnsku text,
   name text not null,
+  parent_asin text not null default '',
   fixed_cost_usd numeric not null default 0,
   purchase_packaging_cny numeric not null default 0,
   first_leg_cny numeric not null default 0,
@@ -127,6 +128,7 @@ create table if not exists daily_records (
 
 ```sql
 alter table products add column if not exists fixed_cost_usd numeric not null default 0;
+alter table products add column if not exists parent_asin text not null default '';
 alter table daily_records add column if not exists snapshot_fixed_cost_usd numeric;
 alter table daily_records add column if not exists snapshot_commission_rate numeric;
 alter table daily_records add column if not exists snapshot_storage_rate numeric;

@@ -238,7 +238,14 @@ def daily_record_metrics(product: ProductInput, record: dict) -> dict:
     recorded_ad_spend = record.get("ad_spend")
     if clamp_non_negative(recorded_ad_spend) == 0 and tacos > 0:
         recorded_ad_spend = None
-    estimate = quick_profit_estimate(historical_product, average_price, units, tacos=tacos, ad_spend=recorded_ad_spend)
+    tacos_input = None if clamp_non_negative(recorded_ad_spend) > 0 and tacos <= 0 else tacos
+    estimate = quick_profit_estimate(
+        historical_product,
+        average_price,
+        units,
+        tacos=tacos_input,
+        ad_spend=recorded_ad_spend,
+    )
     estimate["record_date"] = record.get("record_date", "")
     estimate["sessions"] = sessions
     estimate["cvr"] = units / sessions if sessions > 0 else 0.0

@@ -32,15 +32,15 @@ EXPORT_COLUMNS = [
     ("预估销量(件)", "num0"),
     ("当前TACOS", "pct"),
     ("目标TACOS", "pct"),
-    ("目标净利率", "pct"),
-    ("单件净利($)", "usd"),
-    ("单件利润率(%)", "pct"),
+    ("目标毛利率", "pct"),
+    ("单件毛利润($)", "usd"),
+    ("毛利率(%)", "pct"),
     ("保本TACOS", "pct"),
-    ("目标利润TACOS上限", "pct"),
+    ("目标毛利率TACOS上限", "pct"),
     ("绝对保本售价($)", "usd"),
-    ("目标利润最低售价($)", "usd"),
+    ("目标毛利率最低售价($)", "usd"),
     ("月预估销售额($)", "usd"),
-    ("月预估利润($)", "usd"),
+    ("月预估毛利润($)", "usd"),
 ]
 
 
@@ -131,7 +131,7 @@ def build_profit_workbook(products: list[dict]) -> bytes:
             elif number_type == "num":
                 cell.number_format = "#,##0.00"
 
-            if EXPORT_COLUMNS[col_index - 1][0] in {"单件净利($)", "月预估利润($)"} and isinstance(value, (int, float)):
+            if EXPORT_COLUMNS[col_index - 1][0] in {"单件毛利润($)", "月预估毛利润($)"} and isinstance(value, (int, float)):
                 cell.font = negative_font if value < 0 else positive_font
 
     ws.freeze_panes = "A3"

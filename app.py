@@ -1,152 +1,82 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 from modules.calculations import (
-    ad_headroom,
-    breakeven_price,
-    breakeven_tacos,
-    daily_record_metrics,
-    estimate_status,
-    fixed_cost,
-    headroom_message,
-    max_tacos_for_margin,
-    pct_change,
-    product_from_row,
-    profit_breakdown,
-    quick_profit_estimate,
-    simulation_status,
-    status,
-    tacos_vs_target,
-    target_margin_price,
+    ad_headroom, breakeven_price, breakeven_tacos, daily_record_metrics,
+    estimate_status, fixed_cost, max_tacos_for_margin, pct_change,
+    product_from_row, profit_breakdown, quick_profit_estimate,
+    simulation_status, status, target_margin_price,
 )
 from modules.exporter import build_profit_workbook, export_filename
 from modules.repository import repository
 
-
 STAGES = ["新品", "成长期", "成熟期", "旺季", "淡季", "清库存"]
 POSITIONS = ["核心款", "增长款", "利润款", "防守款", "清库存"]
-PERIODS = ["昨日", "近7天", "近14天", "近30天", "自定义"]
-
+PERIODS = ["近7天", "近14天", "近30天", "自定义"]
 
 st.set_page_config(page_title="Amazon 多产品利润与经营决策助手", layout="wide")
-
-
-st.markdown(
-    """
-    <style>
-    .block-container {padding-top: 1.5rem; padding-bottom: 3rem; max-width: 1280px;}
-    div[data-testid="stMetric"] {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 14px 16px;
-        min-height: 104px;
-    }
-    div[data-testid="stMetricLabel"] p {font-size: 14px; color: #4b5563; white-space: normal;}
-    div[data-testid="stMetricValue"] {font-size: 28px;}
-    .section {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 18px 20px;
-        margin: 26px 0;
-        background: #ffffff;
-    }
-    .section h3 {margin-top: 0;}
-    .decision {
-        border-left: 5px solid #64748b;
-        background: #f8fafc;
-        padding: 14px 16px;
-        border-radius: 8px;
-        margin: 18px 0;
-        font-size: 16px;
-    }
-    .positive {color: #047857; font-weight: 650;}
-    .warning {color: #b45309; font-weight: 650;}
-    .danger {color: #b91c1c; font-weight: 650;}
-    .muted {color: #6b7280;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+:root { --ink:#172b4d; --muted:#64748b; --line:#e2e8f0; --soft:#f8fafc; --blue:#2563eb; }
+.block-container { max-width:1320px; padding:1.5rem 2rem 4rem; }
+h1,h2,h3 { color:var(--ink); letter-spacing:0; }
+div[data-testid="stMetric"] { background:#fff; border:1px solid var(--line); border-radius:8px; padding:12px 14px; min-height:92px; }
+div[data-testid="stMetricLabel"] p { color:var(--muted); font-size:13px; white-space:normal; }
+div[data-testid="stMetricValue"] { color:var(--ink); font-size:28px; }
+.module-title { color:var(--ink); font-size:21px; font-weight:700; border-bottom:1px solid var(--line); padding:6px 0 10px; margin:28px 0 14px; }
+.decision { border-left:4px solid var(--blue); background:#eff6ff; padding:13px 16px; border-radius:6px; margin:14px 0 20px; color:var(--ink); }
+</style>
+""", unsafe_allow_html=True)
 
 
 def money(value: float | None) -> str:
-    if value is None:
-        return "无法计算"
-    return f"${value:,.2f}"
-
-
-def yuan(value: float | None) -> str:
-    if value is None:
-        return "无法计算"
-    return f"￥{value:,.2f}"
+    return "无法计算" if value is None else f"${value:,.2f}"
 
 
 def pct(value: float | None) -> str:
-    if value is None:
-        return "无法计算"
-    return f"{value * 100:.1f}%"
+    return "无法计算" if value is None else f"{value * 100:.1f}%"
 
 
-def pp(value: float) -> str:
-    sign = "+" if value >= 0 else ""
-    return f"{sign}{value * 100:.1f}个百分点"
+def pp(value: float | None) -> str:
+    return "无法计算" if value is None else f"{'+' if value >= 0 else ''}{value * 100:.1f}个百分点"
 
 
 def signed_money(value: float | None) -> str:
-    if value is None:
-        return "无法计算"
-    sign = "+" if value >= 0 else "-"
-    return f"{sign}${abs(value):,.2f}"
+    return "无法计算" if value is None else f"{'+' if value >= 0 else '-'}${abs(value):,.2f}"
 
 
 def count_text(value: float | None) -> str:
-    if value is None:
-        return "无法计算"
-    return f"{value:,.0f}"
-
-
-def tone_class(value: float) -> str:
-    if value < 0:
-        return "danger"
-    if value == 0:
-        return "warning"
-    return "positive"
-
-
-def stored_fixed_cost(product) -> float:
-    """Support one-release mixed deployments while Streamlit Cloud reloads modules."""
-    return float(getattr(product, "fixed_cost_usd", 0) or fixed_cost(product))
+    return "无法计算" if value is None else f"{value:,.0f}"
 
 
 def parent_asin_of(product) -> str:
     return str(getattr(product, "parent_asin", "") or "")
 
 
-def estimate_with_ad_input(product, average_price: float, units: float, tacos: float | None, ad_spend: float | None) -> dict:
-    """Keep one release of compatibility for a cloud app with stale calculation modules."""
-    if tacos is None:
-        revenue = average_price * units
-        tacos = ad_spend / revenue if ad_spend is not None and revenue > 0 else 0.0
-    try:
-        return quick_profit_estimate(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
-    except TypeError:
-        return quick_profit_estimate(product, average_price, units, tacos)
+def stored_fixed_cost(product) -> float:
+    return float(getattr(product, "fixed_cost_usd", 0) or fixed_cost(product))
 
 
-def input_warnings(product, *, sessions: float | None = None, units: float | None = None, tacos: float | None = None, ad_spend: float | None = None) -> list[str]:
+def section(title: str, caption: str | None = None) -> None:
+    st.markdown(f'<div class="module-title">{title}</div>', unsafe_allow_html=True)
+    if caption:
+        st.caption(caption)
+
+
+def input_warnings(product, *, sessions=None, units=None, tacos=None, ad_spend=None) -> list[str]:
     warnings = []
     if stored_fixed_cost(product) <= 0:
         warnings.append("固定成本为空或小于等于0")
     if product.price <= 0:
         warnings.append("售价小于等于0")
-    for label, value in [("平台佣金率", product.commission_rate), ("TACOS", product.tacos), ("目标TACOS", product.target_tacos), ("退货率", product.return_rate), ("仓储率", product.storage_rate)]:
-        if value > 1:
-            warnings.append(f"{label}超过100%")
+    for label, value in [("平台佣金率", product.commission_rate), ("当前TACOS", product.tacos), ("目标TACOS", product.target_tacos), ("退货率", product.return_rate), ("仓储率", product.storage_rate)]:
+        if value < 0 or value > 1:
+            warnings.append(f"{label}必须在0%到100%之间")
     if product.daily_sales < 0 or (units is not None and units < 0):
         warnings.append("销量不能为负数")
     if sessions is not None and units is not None and sessions < units:
@@ -165,836 +95,272 @@ def show_warnings(warnings: list[str]) -> bool:
     return False
 
 
-def section(title: str):
-    st.markdown(f'<div class="section"><h3>{title}</h3>', unsafe_allow_html=True)
+def estimate_with_ad_input(product, average_price: float, units: float, tacos: float | None, ad_spend: float | None) -> dict:
+    if tacos is None:
+        revenue = average_price * units
+        tacos = ad_spend / revenue if ad_spend is not None and revenue > 0 else 0.0
+    try:
+        return quick_profit_estimate(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
+    except TypeError:
+        return quick_profit_estimate(product, average_price, units, tacos)
 
 
-def end_section() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def profile_form(defaults: dict, button_label: str) -> dict | None:
+def profile_form(defaults: dict, button_label: str, form_key: str) -> dict | None:
     product = product_from_row(defaults)
-    with st.form(button_label):
+    with st.form(form_key):
+        st.markdown("**基础参数**")
         c1, c2, c3, c4 = st.columns(4)
-        parent_asin = c1.text_input("Parent ASIN", parent_asin_of(product))
-        asin = c2.text_input("ASIN", product.asin)
-        fnsku = c3.text_input("FNSKU", product.fnsku)
-        name = c4.text_input("产品名称", product.name)
+        parent_asin = c1.text_input("Parent ASIN", parent_asin_of(product)); asin = c2.text_input("ASIN", product.asin); fnsku = c3.text_input("FNSKU", product.fnsku); name = c4.text_input("产品名称", product.name)
         c1, c2, c3, c4 = st.columns(4)
         fixed_cost_usd = c1.number_input("固定成本($/件)", min_value=0.0, value=stored_fixed_cost(product), step=0.01)
-        commission_rate = c2.number_input("平台佣金率(%)", min_value=0.0, value=float(product.commission_rate * 100), step=0.1) / 100
-        storage_rate = c3.number_input("仓储率(%)", min_value=0.0, value=float(product.storage_rate * 100), step=0.1) / 100
-        return_rate = c4.number_input("退货率(%)", min_value=0.0, value=float(product.return_rate * 100), step=0.1) / 100
-
+        commission_rate = c2.number_input("平台佣金率(%)", min_value=0.0, max_value=100.0, value=float(product.commission_rate * 100), step=0.1) / 100
+        storage_rate = c3.number_input("仓储率(%)", min_value=0.0, max_value=100.0, value=float(product.storage_rate * 100), step=0.1) / 100
+        return_rate = c4.number_input("退货率(%)", min_value=0.0, max_value=100.0, value=float(product.return_rate * 100), step=0.1) / 100
         st.markdown("**经营参数**")
         c1, c2, c3, c4 = st.columns(4)
-        price = c1.number_input("当前售价 / 划线价($)", min_value=0.0, value=float(product.price), step=0.01)
-        average_sale_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01)
-        daily_sales = c3.number_input("预估销量(件/日)", min_value=0.0, value=float(product.daily_sales), step=1.0)
-        tacos = c4.number_input("当前TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1) / 100
-
+        price = c1.number_input("当前售价($)", min_value=0.0, value=float(product.price), step=0.01); average_sale_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01); daily_sales = c3.number_input("预估销量(件/日)", min_value=0.0, value=float(product.daily_sales), step=1.0); tacos = c4.number_input("当前TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1) / 100
         c1, c2, c3, c4 = st.columns(4)
-        target_tacos = c1.number_input("目标TACOS(%)", min_value=0.0, value=float(product.target_tacos * 100), step=0.1) / 100
-        target_margin = c2.number_input("目标净利率(%)", min_value=0.0, value=float(product.target_margin * 100), step=0.5) / 100
-        c1, c2 = st.columns(2)
-        stage = c1.selectbox("产品阶段", STAGES, index=STAGES.index(product.stage) if product.stage in STAGES else 1)
-        positioning = c2.selectbox("产品定位", POSITIONS, index=POSITIONS.index(product.positioning) if product.positioning in POSITIONS else 1)
-
-        submitted = st.form_submit_button(button_label, type="primary")
-        if not submitted:
+        target_tacos = c1.number_input("目标TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.target_tacos * 100), step=0.1) / 100; target_margin = c2.number_input("目标毛利率(%)", min_value=0.0, max_value=100.0, value=float(product.target_margin * 100), step=0.5) / 100; stage = c3.selectbox("产品阶段", STAGES, index=STAGES.index(product.stage) if product.stage in STAGES else 1); positioning = c4.selectbox("产品定位", POSITIONS, index=POSITIONS.index(product.positioning) if product.positioning in POSITIONS else 1)
+        if not st.form_submit_button(button_label, type="primary"):
             return None
-        payload = {
-            "parent_asin": parent_asin.strip(),
-            "asin": asin.strip() or "UNSET-ASIN",
-            "fnsku": fnsku.strip(),
-            "name": name.strip() or "未命名产品",
-            "fixed_cost_usd": fixed_cost_usd,
-            "commission_rate": commission_rate,
-            "price": price,
-            "average_sale_price": average_sale_price,
-            "daily_sales": daily_sales,
-            "tacos": tacos,
-            "target_tacos": target_tacos,
-            "target_margin": target_margin,
-            "return_rate": return_rate,
-            "storage_rate": storage_rate,
-            "stage": stage,
-            "positioning": positioning,
-        }
+        payload = {"parent_asin": parent_asin.strip(), "asin": asin.strip() or "UNSET-ASIN", "fnsku": fnsku.strip(), "name": name.strip() or "未命名产品", "fixed_cost_usd": fixed_cost_usd, "commission_rate": commission_rate, "storage_rate": storage_rate, "return_rate": return_rate, "price": price, "average_sale_price": average_sale_price, "daily_sales": daily_sales, "tacos": tacos, "target_tacos": target_tacos, "target_margin": target_margin, "stage": stage, "positioning": positioning}
         if show_warnings(input_warnings(product_from_row(payload))):
             return None
         return payload
 
 
+def status_order(label: str) -> int:
+    return 0 if label.startswith("🔴") else 1 if label.startswith("🟡") else 2
+
+
 def overview(products: list[dict]) -> None:
     st.title("Amazon 多产品利润与经营决策助手")
-    st.caption("围绕利润、价格、TACOS承受力和经营优先级的轻量运营决策工具。")
-    if repository.is_cloud_persistent:
-        st.success("当前使用 Supabase 持久化存储，适合线上长期保存产品档案。")
-    else:
-        st.warning("当前使用 SQLite 演示存储。Streamlit Cloud 重启或重新部署后，运行时修改的数据可能丢失；正式多人使用请配置 Supabase。")
-
+    st.caption("看全局：快速判断哪个产品贡献利润，哪个产品需要优先处理。")
+    st.warning("当前使用 SQLite 演示存储；Streamlit Cloud 长期多人使用请配置 Supabase。" if not repository.is_cloud_persistent else "当前使用 Supabase 持久化存储。")
     if products:
-        st.download_button(
-            "导出全部产品",
-            data=build_profit_workbook(products),
-            file_name=export_filename(products),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-        )
-
-    sort_by = st.selectbox(
-        "产品排序",
-        ["月预估毛利润", "毛利率", "TACOS", "状态"],
-        index=0,
-    )
-
-    rows = []
-    total_revenue = total_profit = total_ad_spend = 0.0
-    healthy = watch = risky = 0
+        st.download_button("导出全部产品", build_profit_workbook(products), export_filename(products), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary", key="export_all_overview")
+    rows = []; total_revenue = total_profit = total_ad = 0.0; healthy = watch = risky = 0
     for row in products:
-        product = product_from_row(row)
-        breakdown = profit_breakdown(product)
-        item_status = status(product)
-        target_limit = max_tacos_for_margin(product, product.target_margin)
-        headroom = target_limit - product.tacos
-        total_revenue += breakdown["monthly_revenue"]
-        total_profit += breakdown["monthly_profit"]
-        total_ad_spend += breakdown["price"] * product.tacos * product.daily_sales * 30
-        healthy += item_status.startswith("🟢")
-        watch += item_status.startswith("🟡")
-        risky += item_status.startswith("🔴")
-        rows.append(
-            {
-                "产品名称": row["name"],
-                "Parent ASIN": parent_asin_of(product) or "未分组",
-                "ASIN": row["asin"],
-                "当前售价": money(product.price),
-                "预估销量": f"{product.daily_sales:.0f}",
-                "当前TACOS": pct(product.tacos),
-                "目标TACOS": pct(product.target_tacos),
-                "单件净利": money(breakdown["net_profit"]),
-                "毛利率": pct(breakdown["net_margin"]),
-                "月预估毛利润": money(breakdown["monthly_profit"]),
-                "状态": item_status,
-                "_profit": breakdown["monthly_profit"],
-                "_margin": breakdown["net_margin"],
-                "_tacos": product.tacos,
-                "_headroom": headroom,
-                "_status_order": 0 if item_status.startswith("🔴") else 1 if item_status.startswith("🟡") else 2,
-            }
-        )
-
-    sort_map = {
-        "月预估毛利润": ("_profit", True),
-        "毛利率": ("_margin", False),
-        "TACOS": ("_tacos", False),
-        "状态": ("_status_order", True),
-    }
-    sort_key, ascending = sort_map[sort_by]
-    rows = sorted(rows, key=lambda item: item[sort_key], reverse=not ascending)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("预估月销售额", money(total_revenue))
-    c2.metric("预估月利润", money(total_profit))
-    c3.metric("整体毛利率", pct(total_profit / total_revenue if total_revenue else 0))
-    c4.metric("整体TACOS", pct(total_ad_spend / total_revenue if total_revenue else 0))
-    c1, c2, c3 = st.columns(3)
-    c1.metric("健康产品数", healthy)
-    c2.metric("关注产品数", watch)
-    c3.metric("风险产品数", risky)
-    st.caption("月预估销售额和月预估利润按当前经营状态推算，不是实际财务利润。")
-
-    st.subheader("产品列表")
-    if rows:
-        display = pd.DataFrame(rows).drop(columns=["_profit", "_margin", "_tacos", "_headroom", "_status_order"])
-        st.dataframe(display, use_container_width=True, hide_index=True, row_height=40)
-        parent_rows = []
-        for parent, group in pd.DataFrame(rows).groupby("Parent ASIN"):
-            parent_rows.append({
-                "Parent ASIN": parent,
-                "子体数量": len(group),
-                "总销量": float(group["预估销量"].str.replace(",", "").astype(float).sum()),
-                "总销售额": money(sum(profit_breakdown(product_from_row(p))['monthly_revenue'] for p in products if (product_from_row(p).parent_asin or "未分组") == parent)),
-                "月预估毛利润": money(float(group["_profit"].sum())),
-            })
-        if parent_rows:
-            st.markdown("**Parent ASIN 汇总**")
-            st.dataframe(pd.DataFrame(parent_rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("还没有产品，请在侧边栏新增。")
+        product = product_from_row(row); bd = profit_breakdown(product); label = status(product)
+        total_revenue += bd["monthly_revenue"]; total_profit += bd["monthly_profit"]; total_ad += bd["price"] * product.tacos * product.daily_sales * 30; healthy += label.startswith("🟢"); watch += label.startswith("🟡"); risky += label.startswith("🔴")
+        rows.append({"产品名称": product.name, "Parent ASIN": parent_asin_of(product) or "未分组", "ASIN": product.asin, "当前售价": money(product.price), "预估销量": f"{product.daily_sales:.0f}", "当前TACOS": pct(product.tacos), "目标TACOS": pct(product.target_tacos), "单件毛利润": money(bd["net_profit"]), "毛利率": pct(bd["net_margin"]), "月预估毛利润": money(bd["monthly_profit"]), "状态": label, "_profit": bd["monthly_profit"], "_margin": bd["net_margin"], "_tacos": product.tacos, "_status": status_order(label)})
+    sort_label = st.selectbox("产品排序", ["月预估毛利润", "毛利率", "TACOS", "状态"], key="overview_sort"); sort_key = {"月预估毛利润": "_profit", "毛利率": "_margin", "TACOS": "_tacos", "状态": "_status"}[sort_label]; rows.sort(key=lambda item: item[sort_key], reverse=sort_label in {"月预估毛利润", "状态"})
+    c1, c2, c3, c4 = st.columns(4); c1.metric("预估月销售额", money(total_revenue)); c2.metric("预估月毛利润", money(total_profit)); c3.metric("整体毛利率", pct(total_profit / total_revenue if total_revenue else 0)); c4.metric("整体TACOS", pct(total_ad / total_revenue if total_revenue else 0))
+    c1, c2, c3 = st.columns(3); c1.metric("健康产品数", healthy); c2.metric("关注产品数", watch); c3.metric("风险产品数", risky)
+    section("产品列表", "按当前经营状态推算，不是实际财务利润。")
+    if not rows:
+        st.info("还没有产品，请在侧边栏新增。"); return
+    st.dataframe(pd.DataFrame(rows).drop(columns=["_profit", "_margin", "_tacos", "_status"]), width="stretch", hide_index=True)
+    groups = {}
+    for row in products:
+        groups.setdefault(parent_asin_of(product_from_row(row)) or "未分组", []).append(row)
+    summary = []
+    for parent, children in groups.items():
+        metrics = [profit_breakdown(product_from_row(row)) for row in children]; revenue = sum(item["monthly_revenue"] for item in metrics); profit = sum(item["monthly_profit"] for item in metrics)
+        summary.append({"Parent ASIN": parent, "子体数量": len(children), "月总销售额": money(revenue), "月总毛利润": money(profit), "毛利率": pct(profit / revenue if revenue else 0)})
+    section("Parent ASIN 汇总", "按子体汇总，比例按总额计算，不做简单平均。"); st.dataframe(pd.DataFrame(summary), width="stretch", hide_index=True)
 
 
-def quick_estimate_block(product) -> None:
-    section("利润快速估算")
-    st.caption("只填写销售均价、销量、TACOS；基础成本、佣金率、仓储率、退货率自动读取当前产品档案。")
-    c1, c2, c3, c4 = st.columns(4)
-    period = c1.selectbox("时间范围备注", PERIODS)
-    average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01)
-    units = c3.number_input("销量(件)", min_value=0.0, value=float(max(product.daily_sales, 1)), step=1.0)
-    mode = c4.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key="estimate_ad_mode")
-    c1, c2 = st.columns(2)
+def quick_estimate(product, key_prefix: str) -> None:
+    section("经营快速测算", "使用已经发生的销售均价、销量和 TACOS / 广告花费，快速核算阶段毛利润。")
+    c1, c2, c3, c4 = st.columns(4); period = c1.selectbox("时间范围备注", ["昨日", "近7天", "近14天", "近30天", "自定义"], key=f"{key_prefix}_period"); average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"{key_prefix}_price"); units = c3.number_input("销量(件)", min_value=0.0, value=float(max(product.daily_sales, 1)), step=1.0, key=f"{key_prefix}_units"); mode = c4.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"{key_prefix}_mode")
     if mode == "输入TACOS":
-        tacos = c1.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key="estimate_tacos") / 100
-        ad_spend = None
+        tacos = st.number_input("TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1, key=f"{key_prefix}_tacos") / 100; ad_spend = None
     else:
-        ad_spend = c1.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key="estimate_ad_spend")
-        tacos = None
-    estimate = estimate_with_ad_input(product, average_price, units, tacos=tacos, ad_spend=ad_spend)
-    if show_warnings(input_warnings(product, units=units, tacos=estimate["tacos"], ad_spend=ad_spend)):
-        end_section()
-        return
-    gap = estimate["net_margin"] - product.target_margin
-    est_status = estimate_status(estimate["total_net_profit"], estimate["net_margin"], product.target_margin)
+        ad_spend = st.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_ad"); tacos = None
+    estimate = estimate_with_ad_input(product, average_price, units, tacos, ad_spend)
+    if show_warnings(input_warnings(product, units=units, tacos=estimate["tacos"], ad_spend=ad_spend)): return
+    c1, c2, c3, c4 = st.columns(4); c1.metric("销售额", money(estimate["revenue"])); c2.metric("广告花费", money(estimate["ad_spend"])); c3.metric("单件毛利润", money(estimate["unit_net_profit"])); c4.metric("总毛利润", money(estimate["total_net_profit"]))
+    c1, c2, c3 = st.columns(3); c1.metric("毛利率", pct(estimate["net_margin"])); c2.metric("目标毛利率", pct(product.target_margin)); c3.metric("目标差值", pp(estimate["net_margin"] - product.target_margin)); st.markdown(f"**{period}测算状态：{estimate_status(estimate['total_net_profit'], estimate['net_margin'], product.target_margin)}**")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("销售额", money(estimate["revenue"]))
-    c2.metric("估算广告花费", money(estimate["ad_spend"]))
-    c3.metric("单件估算毛利润", money(estimate["unit_net_profit"]))
-    c4.metric("总估算毛利润", money(estimate["total_net_profit"]))
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("销售均价", money(estimate["average_price"]))
-    c2.metric("销量", f"{estimate['units']:.0f} 件")
-    c3.metric("估算毛利率", pct(estimate["net_margin"]))
-    c4.metric("目标差值", pp(gap))
-    st.markdown(f"**{period}估算状态：{est_status}**")
 
-    st.markdown("**与计划值对比**")
-    compare = pd.DataFrame(
-        [
-            ["售价 / 销售均价", money(product.price), money(estimate["average_price"]), money(estimate["average_price"] - product.price)],
-            ["TACOS", pct(product.target_tacos), pct(estimate["tacos"]), pp(estimate["tacos"] - product.target_tacos)],
-            ["销量", f"{product.daily_sales:.0f} 件/日", f"{estimate['units']:.0f} 件", f"{estimate['units'] - product.daily_sales:+.0f} 件"],
-            ["毛利率", pct(product.target_margin), pct(estimate["net_margin"]), pp(gap)],
-        ],
-        columns=["项目", "计划值", "本次实际估算", "差值"],
-    )
-    st.dataframe(compare, use_container_width=True, hide_index=True, row_height=40)
-    end_section()
+def price_simulation(product, key_prefix: str) -> None:
+    section("价格模拟", "主要决策区：查看改价、促销价或恢复原价后的毛利润结构。")
+    c1, c2, c3 = st.columns(3); low = c1.number_input("最低模拟价格($)", min_value=0.01, value=max(0.01, round(product.price - 3, 2)), step=0.5, key=f"{key_prefix}_low"); high = c2.number_input("最高模拟价格($)", min_value=0.01, value=round(product.price + 3, 2), step=0.5, key=f"{key_prefix}_high"); step = c3.number_input("价格间隔($)", min_value=0.01, value=1.0, step=0.25, key=f"{key_prefix}_step")
+    prices = []; current = high
+    while current >= low - 1e-9 and len(prices) < 300: prices.append(round(current, 2)); current -= step
+    prices = sorted(set(prices + [round(product.price, 2)]), reverse=True); sim = []
+    for price in prices:
+        bd = profit_breakdown(product, price=price); max_tacos = max_tacos_for_margin(product, product.target_margin, price=price); sim.append({"售价": price, "单件毛利润": bd["net_profit"], "毛利率": bd["net_margin"], "保本TACOS": breakeven_tacos(product, price), "目标毛利率TACOS上限": max_tacos, "状态": simulation_status(bd["net_profit"], bd["net_margin"], product.target_margin), "当前售价": abs(price - product.price) < 0.001})
+    chart_metric = st.radio("价格图表指标", ["毛利润", "毛利率", "目标毛利率TACOS上限"], horizontal=True, key=f"{key_prefix}_chart_metric"); y_key = {"毛利润": "单件毛利润", "毛利率": "毛利率", "目标毛利率TACOS上限": "目标毛利率TACOS上限"}[chart_metric]
+    fig = go.Figure(go.Scatter(x=[item["售价"] for item in sim], y=[item[y_key] for item in sim], mode="lines+markers", customdata=[[pct(item["毛利率"]), money(item["单件毛利润"]), item["状态"]] for item in sim], hovertemplate="售价：$%{x:.2f}<br>值：%{y:.2%}<br>毛利率：%{customdata[0]}<br>毛利润：%{customdata[1]}<br>状态：%{customdata[2]}<extra></extra>" if y_key != "单件毛利润" else "售价：$%{x:.2f}<br>毛利润：$%{y:.2f}<br>毛利率：%{customdata[0]}<br>状态：%{customdata[2]}<extra></extra>")); fig.update_layout(height=330, margin={"l":20, "r":20, "t":20, "b":20}, xaxis_title="售价", yaxis_title=chart_metric, showlegend=False); st.plotly_chart(fig, width="stretch")
+    table = [{"售价": f"{'★ ' if item['当前售价'] else ''}{money(item['售价'])}", "单件毛利润": money(item["单件毛利润"]), "毛利率": pct(item["毛利率"]), "保本TACOS": pct(item["保本TACOS"]), "目标毛利率TACOS上限": pct(item["目标毛利率TACOS上限"]), "状态": item["状态"]} for item in sim]; st.dataframe(pd.DataFrame(table), width="stretch", hide_index=True)
+    target_price = target_margin_price(product)
+    if target_price is not None: st.info(f"在当前 TACOS 下，最低约为 {money(target_price)} 时可保持 {pct(product.target_margin)} 目标毛利率。")
+
+
+def ad_budget_reference(product, key_prefix: str) -> None:
+    section("广告预算参考", "这是经营目标对应的广告花费参考，不等于广告 Campaign 必须设置的 Budget。")
+    c1, c2, c3 = st.columns(3); revenue = c1.number_input("目标日销售额($)", min_value=0.0, value=round(product.price * product.daily_sales, 2), step=10.0, key=f"{key_prefix}_revenue"); target_tacos = c2.number_input("目标TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.target_tacos * 100), step=0.5, key=f"{key_prefix}_tacos") / 100; current = c3.number_input("当前广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"{key_prefix}_current")
+    reference = revenue * target_tacos; c1, c2 = st.columns(2); c1.metric("可承受广告花费", f"{money(reference)}/天"); c2.metric("当前花费比目标范围", signed_money(current - reference))
+
+
+def overview_tab(product, row: dict, selected_id) -> None:
+    bd = profit_breakdown(product); be_tacos = breakeven_tacos(product); limit = max_tacos_for_margin(product, product.target_margin); room = ad_headroom(product); be_price = breakeven_price(product); target_price = target_margin_price(product)
+    section("利润与成本", "毛利润为本工具的运营测算口径，不等同于财务报表利润。")
+    c1, c2, c3, c4 = st.columns(4); c1.metric("售价", money(product.price)); c2.metric("固定成本", f"-{money(bd['fixed_cost'])}"); c3.metric("平台佣金", f"-{money(bd['commission'])}"); c4.metric("广告成本", f"-{money(bd['ad_cost'])}")
+    c1, c2, c3, c4 = st.columns(4); c1.metric("仓储预留", f"-{money(bd['storage_reserve'])}"); c2.metric("退货预留", f"-{money(bd['return_reserve'])}"); c3.metric("单件毛利润", money(bd["net_profit"])); c4.metric("毛利率", pct(bd["net_margin"]))
+    with st.expander("查看计算公式"):
+        st.write("平台佣金 = 售价 × 平台佣金率"); st.write("广告成本 = 售价 × 当前 TACOS"); st.write("仓储预留 = 售价 × 仓储率"); st.write("退货预留 = 退货率 ×（固定成本 + 平台佣金 × 20%）"); st.write("本工具中的毛利润 = 售价 - 固定成本 - 平台佣金 - 广告成本 - 仓储预留 - 退货预留"); st.write("毛利率 = 单件毛利润 ÷ 售价")
+    section("经营概览")
+    target_margin = st.number_input("目标毛利率(%)", min_value=0.0, max_value=100.0, value=float(product.target_margin * 100), step=0.5, key=f"target_margin_{selected_id}") / 100
+    if abs(target_margin - product.target_margin) > 1e-9:
+        st.info("目标毛利率已临时调整，点击保存后写入产品。")
+        if st.button("保存目标毛利率", key=f"save_margin_{selected_id}"):
+            updated = dict(row); updated["target_margin"] = target_margin; repository.update_product(selected_id, updated); st.rerun()
+        product.target_margin = target_margin; bd = profit_breakdown(product); be_tacos = breakeven_tacos(product); limit = max_tacos_for_margin(product, target_margin); room = ad_headroom(product); be_price = breakeven_price(product); target_price = target_margin_price(product)
+    c1, c2, c3, c4 = st.columns(4); c1.metric("当前售价", money(product.price)); c2.metric("预估销量", f"{product.daily_sales:.0f} 件/日"); c3.metric("月预估销售额", money(bd["monthly_revenue"])); c4.metric("月预估毛利润", money(bd["monthly_profit"]))
+    c1, c2, c3, c4 = st.columns(4); c1.metric("当前TACOS", pct(product.tacos)); c2.metric("目标TACOS", pct(product.target_tacos)); c3.metric("保本TACOS", pct(be_tacos)); c4.metric("目标毛利率TACOS上限", pct(limit))
+    c1, c2, c3, c4 = st.columns(4); c1.metric("绝对保本售价", money(be_price)); c2.metric("目标毛利率最低售价", money(target_price)); c3.metric("距离保本价", signed_money(product.price - be_price if be_price is not None else None)); c4.metric("距离目标毛利率价格", signed_money(product.price - target_price if target_price is not None else None))
+    if be_price is not None and product.price < be_price: conclusion = "当前售价已经低于绝对保本售价，建议优先止损。"
+    elif room > 0.03: conclusion = f"当前毛利润正常，目标毛利率 TACOS 上限还有 {pp(room)} 空间，可以谨慎测试放量。"
+    elif room >= 0: conclusion = f"当前毛利润仍为正，但 TACOS 距离目标毛利率上限仅剩 {pp(room)}，广告放量空间有限。"
+    else: conclusion = "当前 TACOS 已超过目标毛利率允许水平，应优先优化广告效率或恢复价格安全边际。"
+    st.markdown(f'<div class="decision">{conclusion}</div>', unsafe_allow_html=True)
+    with st.expander("编辑基础参数", expanded=False):
+        data = profile_form(row, "保存基础参数", f"edit_profile_{selected_id}")
+        if data: repository.update_product(selected_id, data); st.rerun()
+    st.caption(f"基础参数最后更新：{row.get('updated_at') or '未知'}")
+
+
+def simulation_tab(product, selected_id) -> None:
+    price_simulation(product, f"sim_{selected_id}"); quick_estimate(product, f"estimate_{selected_id}"); ad_budget_reference(product, f"budget_{selected_id}")
 
 
 def format_change(before: float, after: float, is_rate: bool = False, is_money: bool = False) -> str:
     diff = after - before
-    if is_rate:
-        return pp(diff)
-    change = pct_change(before, after)
-    if is_money:
-        absolute = signed_money(diff)
-    else:
-        sign = "+" if diff >= 0 else ""
-        absolute = f"{sign}{diff:,.0f}"
-    if change is None:
-        return f"{absolute}，无可比百分比"
-    return f"{absolute}，{pp(change)}"
+    if is_rate: return pp(diff)
+    absolute = signed_money(diff) if is_money else f"{'+' if diff >= 0 else ''}{diff:,.0f}"; change = pct_change(before, after)
+    return f"{absolute}，{pp(change)}" if change is not None else f"{absolute}，无可比百分比"
 
 
-def trend_conclusion(previous: dict | None, latest: dict | None) -> str:
-    if not previous or not latest:
-        return "至少录入两条每日数据后，系统会自动判断最近一次价格或经营调整是否有效。"
-    cvr_up = latest["cvr"] > previous["cvr"]
-    units_up = latest["units"] > previous["units"]
-    profit_up = latest["total_net_profit"] > previous["total_net_profit"]
-    tacos_up = latest["tacos"] > previous["tacos"]
-    if cvr_up and units_up and profit_up:
-        return "本次调整后CVR和销量提升，总利润增加，当前调整整体有效。"
-    if units_up and not profit_up:
-        return "销量虽然提升，但总利润下降，当前价格变化没有带来更好的经营收益。"
-    if cvr_up and tacos_up and not profit_up:
-        return "CVR提升明显，但TACOS同时恶化，建议继续观察，不宜立即继续调价。"
-    if profit_up and not tacos_up:
-        return "总利润改善且TACOS未恶化，当前经营方向可以继续观察。"
-    return "最近一次变化效果不明显，建议结合备注中的调价、Coupon或广告动作继续观察。"
+def aggregate_metrics(items: list[dict]) -> dict:
+    revenue = sum(item["revenue"] for item in items); units = sum(item["units"] for item in items); sessions = sum(item["sessions"] for item in items); ad_spend = sum(item["ad_spend"] for item in items); profit = sum(item["total_net_profit"] for item in items)
+    return {"average_price": revenue / units if units else 0, "sessions": sessions, "cvr": units / sessions if sessions else 0, "units": units, "ad_spend": ad_spend, "tacos": ad_spend / revenue if revenue else 0, "revenue": revenue, "unit_net_profit": profit / units if units else 0, "total_net_profit": profit, "net_margin": profit / revenue if revenue else 0}
 
 
-def history_dataframe(product, records: list[dict]) -> pd.DataFrame:
-    rows = []
-    for record in records:
-        metrics = daily_record_metrics(product, record)
-        rows.append(
-            {
-                "日期": metrics["record_date"],
-                "销售均价": money(metrics["average_price"]),
-                "Session": count_text(metrics["sessions"]),
-                "CVR": pct(metrics["cvr"]),
-                "销量": count_text(metrics["units"]),
-                "广告花费": money(metrics["entered_ad_spend"]),
-                "TACOS": pct(metrics["tacos"]),
-                "销售额": money(metrics["revenue"]),
-                "单件毛利润": money(metrics["unit_net_profit"]),
-                "总毛利润": money(metrics["total_net_profit"]),
-                "毛利率": pct(metrics["net_margin"]),
-                "备注": metrics["note"],
-            }
-        )
-    return pd.DataFrame(rows)
+def period_ranges(records: list[dict], mode: str, custom_start=None, custom_end=None) -> tuple[list[dict], list[dict]]:
+    ordered = sorted(records, key=lambda item: item["record_date"])
+    if not ordered: return [], []
+    latest = pd.to_datetime(ordered[-1]["record_date"]).date()
+    if mode == "自定义" and custom_start and custom_end:
+        span = (custom_end - custom_start).days + 1; current = [item for item in ordered if custom_start.isoformat() <= item["record_date"] <= custom_end.isoformat()]; previous_start = custom_start - timedelta(days=span); previous_end = custom_start - timedelta(days=1); previous = [item for item in ordered if previous_start.isoformat() <= item["record_date"] <= previous_end.isoformat()]; return previous, current
+    days = int(mode.replace("近", "").replace("天", "")); current_start = latest - timedelta(days=days - 1); previous_start = current_start - timedelta(days=days); previous_end = current_start - timedelta(days=1)
+    return [item for item in ordered if previous_start.isoformat() <= item["record_date"] <= previous_end.isoformat()], [item for item in ordered if current_start.isoformat() <= item["record_date"] <= latest.isoformat()]
 
 
-def comparison_dataframe(product, records: list[dict]) -> tuple[pd.DataFrame, dict | None, dict | None]:
-    chronological = sorted(records, key=lambda item: item["record_date"])
-    if len(chronological) < 2:
-        return pd.DataFrame(), None, None
-    previous = daily_record_metrics(product, chronological[-2])
-    latest = daily_record_metrics(product, chronological[-1])
-    rows = [
-        ["销售均价", money(previous["average_price"]), money(latest["average_price"]), format_change(previous["average_price"], latest["average_price"], is_money=True)],
-        ["Session", count_text(previous["sessions"]), count_text(latest["sessions"]), format_change(previous["sessions"], latest["sessions"])],
-        ["CVR", pct(previous["cvr"]), pct(latest["cvr"]), format_change(previous["cvr"], latest["cvr"], is_rate=True)],
-        ["销量", count_text(previous["units"]), count_text(latest["units"]), format_change(previous["units"], latest["units"])],
-        ["广告花费", money(previous["entered_ad_spend"]), money(latest["entered_ad_spend"]), format_change(previous["entered_ad_spend"], latest["entered_ad_spend"], is_money=True)],
-        ["TACOS", pct(previous["tacos"]), pct(latest["tacos"]), format_change(previous["tacos"], latest["tacos"], is_rate=True)],
-        ["单件毛利润", money(previous["unit_net_profit"]), money(latest["unit_net_profit"]), format_change(previous["unit_net_profit"], latest["unit_net_profit"], is_money=True)],
-        ["总毛利润", money(previous["total_net_profit"]), money(latest["total_net_profit"]), format_change(previous["total_net_profit"], latest["total_net_profit"], is_money=True)],
-        ["毛利率", pct(previous["net_margin"]), pct(latest["net_margin"]), format_change(previous["net_margin"], latest["net_margin"], is_rate=True)],
-    ]
-    return pd.DataFrame(rows, columns=["指标", "调整前", "调整后", "变化"]), previous, latest
+def comparison_table(product, records: list[dict], key_prefix: str) -> tuple[pd.DataFrame, dict | None, dict | None]:
+    mode = st.selectbox("对比周期", PERIODS, key=f"{key_prefix}_period"); start = end = None
+    if mode == "自定义":
+        c1, c2 = st.columns(2); start = c1.date_input("当前阶段开始", value=date.today() - timedelta(days=6), key=f"{key_prefix}_start"); end = c2.date_input("当前阶段结束", value=date.today(), key=f"{key_prefix}_end")
+    previous_records, current_records = period_ranges(records, mode, start, end)
+    if not previous_records or not current_records: return pd.DataFrame(), None, None
+    previous = aggregate_metrics([daily_record_metrics(product, item) for item in previous_records]); current = aggregate_metrics([daily_record_metrics(product, item) for item in current_records]); rows = []
+    for label, key, rate, money_value in [("销售均价", "average_price", False, True), ("Session", "sessions", False, False), ("CVR", "cvr", True, False), ("销量", "units", False, False), ("销售额", "revenue", False, True), ("广告花费", "ad_spend", False, True), ("TACOS", "tacos", True, False), ("单件毛利润", "unit_net_profit", False, True), ("总毛利润", "total_net_profit", False, True), ("毛利率", "net_margin", True, False)]:
+        formatter = pct if rate else money if money_value else count_text; rows.append([label, formatter(previous[key]), formatter(current[key]), format_change(previous[key], current[key], is_rate=rate, is_money=money_value)])
+    return pd.DataFrame(rows, columns=["指标", "上一阶段", "当前阶段", "变化"]), previous, current
 
 
-def period_comparison_dataframe(product, records: list[dict], days: int) -> tuple[pd.DataFrame, dict | None, dict | None]:
-    chronological = sorted(records, key=lambda item: item["record_date"])
-    if len(chronological) < days * 2:
-        return comparison_dataframe(product, records)
-    metrics = [daily_record_metrics(product, record) for record in chronological]
-
-    def aggregate(items: list[dict]) -> dict:
-        revenue = sum(item["revenue"] for item in items)
-        sessions = sum(item["sessions"] for item in items)
-        units = sum(item["units"] for item in items)
-        ad_spend = sum(item["ad_spend"] for item in items)
-        profit = sum(item["total_net_profit"] for item in items)
-        return {
-            "average_price": revenue / units if units else 0,
-            "sessions": sessions,
-            "cvr": units / sessions if sessions else 0,
-            "units": units,
-            "ad_spend": ad_spend,
-            "tacos": ad_spend / revenue if revenue else 0,
-            "revenue": revenue,
-            "total_net_profit": profit,
-            "unit_net_profit": profit / units if units else 0,
-            "net_margin": profit / revenue if revenue else 0,
-        }
-
-    previous = aggregate(metrics[-days * 2:-days])
-    latest = aggregate(metrics[-days:])
-    rows = [
-        ["销售均价", money(previous["average_price"]), money(latest["average_price"]), format_change(previous["average_price"], latest["average_price"], is_money=True)],
-        ["Session", count_text(previous["sessions"]), count_text(latest["sessions"]), format_change(previous["sessions"], latest["sessions"])],
-        ["CVR", pct(previous["cvr"]), pct(latest["cvr"]), format_change(previous["cvr"], latest["cvr"], is_rate=True)],
-        ["销量", count_text(previous["units"]), count_text(latest["units"]), format_change(previous["units"], latest["units"])],
-        ["销售额", money(previous["revenue"]), money(latest["revenue"]), format_change(previous["revenue"], latest["revenue"], is_money=True)],
-        ["广告花费", money(previous["ad_spend"]), money(latest["ad_spend"]), format_change(previous["ad_spend"], latest["ad_spend"], is_money=True)],
-        ["TACOS", pct(previous["tacos"]), pct(latest["tacos"]), format_change(previous["tacos"], latest["tacos"], is_rate=True)],
-        ["单件毛利润", money(previous["unit_net_profit"]), money(latest["unit_net_profit"]), format_change(previous["unit_net_profit"], latest["unit_net_profit"], is_money=True)],
-        ["总毛利润", money(previous["total_net_profit"]), money(latest["total_net_profit"]), format_change(previous["total_net_profit"], latest["total_net_profit"], is_money=True)],
-        ["毛利率", pct(previous["net_margin"]), pct(latest["net_margin"]), format_change(previous["net_margin"], latest["net_margin"], is_rate=True)],
-    ]
-    return pd.DataFrame(rows, columns=["指标", "上一阶段", "当前阶段", "变化"]), previous, latest
+def effect_conclusion(previous: dict | None, current: dict | None) -> str:
+    if not previous or not current: return "至少需要两个完整阶段的数据，才能判断价格或经营调整是否有效。"
+    price_change = current["average_price"] - previous["average_price"]; profit_change = current["total_net_profit"] - previous["total_net_profit"]; units_change = current["units"] - previous["units"]; cvr_change = current["cvr"] - previous["cvr"]; tacos_change = current["tacos"] - previous["tacos"]
+    if profit_change > 0 and abs(price_change) > 0: return "🟢 本次价格调整有效：总毛利润增加，当前历史数据支持继续观察这个价格方向。"
+    if profit_change < 0 and units_change <= 0: return "🔴 本次价格调整无效：价格变化没有带来足够销量提升，总毛利润下降。"
+    if units_change > 0 and tacos_change > 0 and profit_change <= 0: return "🟡 增长有效但利润承压：销量提升伴随 TACOS 恶化，建议优先优化广告效率。"
+    if cvr_change > 0 and units_change > 0: return "🟡 转化和销量有所改善，但总毛利润变化有限，建议继续积累样本。"
+    return "当前阶段变化不明显，不能仅凭销量判断价格调整成功，建议继续记录。"
 
 
-def trend_chart(df: pd.DataFrame, title: str, left_col: str, right_col: str, left_name: str, right_name: str, left_fmt: str, right_fmt: str) -> go.Figure:
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    hover = df[["日期", "备注"]].to_numpy()
-    fig.add_trace(
-        go.Scatter(
-            x=df["日期"],
-            y=df[left_col],
-            mode="lines+markers",
-            name=left_name,
-            customdata=hover,
-            hovertemplate=f"日期：%{{customdata[0]}}<br>{left_name}：%{{y:{left_fmt}}}<br>备注：%{{customdata[1]}}<extra></extra>",
-        ),
-        secondary_y=False,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=df["日期"],
-            y=df[right_col],
-            mode="lines+markers",
-            name=right_name,
-            customdata=hover,
-            hovertemplate=f"日期：%{{customdata[0]}}<br>{right_name}：%{{y:{right_fmt}}}<br>备注：%{{customdata[1]}}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-    if not df.empty:
-        latest = df.iloc[-1]
-        fig.add_trace(
-            go.Scatter(
-                x=[latest["日期"]],
-                y=[latest[left_col]],
-                mode="markers",
-                marker={"size": 12, "symbol": "circle-open"},
-                name="最新记录",
-                hoverinfo="skip",
-            ),
-            secondary_y=False,
-        )
-    fig.update_layout(
-        title=title,
-        height=300,
-        margin={"l": 30, "r": 30, "t": 44, "b": 20},
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
-    )
-    fig.update_xaxes(title_text="日期")
-    fig.update_yaxes(title_text=left_name, secondary_y=False)
-    fig.update_yaxes(title_text=right_name, secondary_y=True)
-    return fig
+def history_charts(product, records: list[dict], key_prefix: str) -> None:
+    metrics = [daily_record_metrics(product, item) for item in records]
+    if not metrics: st.info("还没有足够记录生成图表。"); return
+    df = pd.DataFrame(metrics).sort_values("record_date"); custom = [[m["record_date"], m["sessions"], m["cvr"], m["units"], m["tacos"], m["unit_net_profit"], m["total_net_profit"], m["note"]] for m in metrics]
+    fig1 = go.Figure(go.Scatter(x=df["average_price"], y=df["total_net_profit"], mode="markers+lines", marker={"size": (df["units"].clip(lower=1) ** 0.5) * 6, "color": "#2563eb"}, customdata=custom, hovertemplate="日期：%{customdata[0]}<br>销售均价：$%{x:.2f}<br>总毛利润：$%{y:.2f}<br>Session：%{customdata[1]:,.0f}<br>CVR：%{customdata[2]:.1%}<br>销量：%{customdata[3]:,.0f}<br>TACOS：%{customdata[4]:.1%}<br>单件毛利润：$%{customdata[5]:.2f}<br>备注：%{customdata[7]}<extra></extra>")); fig1.update_layout(title="销售均价 vs 总毛利润", height=330, margin={"l":20, "r":20, "t":45, "b":20}, xaxis_title="销售均价", yaxis_title="总毛利润", showlegend=False)
+    fig2 = go.Figure(go.Scatter(x=df["average_price"], y=df["cvr"], mode="markers+lines", marker={"size":10, "color":"#0f766e"}, customdata=custom, hovertemplate="日期：%{customdata[0]}<br>销售均价：$%{x:.2f}<br>CVR：%{y:.1%}<br>Session：%{customdata[1]:,.0f}<br>销量：%{customdata[3]:,.0f}<br>TACOS：%{customdata[4]:.1%}<br>总毛利润：$%{customdata[6]:.2f}<extra></extra>")); fig2.update_layout(title="销售均价 vs CVR", height=330, margin={"l":20, "r":20, "t":45, "b":20}, xaxis_title="销售均价", yaxis_title="CVR", showlegend=False)
+    c1, c2 = st.columns(2); c1.plotly_chart(fig1, width="stretch", key=f"{key_prefix}_profit"); c2.plotly_chart(fig2, width="stretch", key=f"{key_prefix}_cvr")
+    with st.expander("查看时间趋势", expanded=False): st.line_chart(df.rename(columns={"record_date":"日期", "average_price":"销售均价", "cvr":"CVR", "units":"销量", "tacos":"TACOS", "total_net_profit":"总毛利润"}).set_index("日期")[["销售均价", "CVR", "销量", "TACOS", "总毛利润"]])
 
 
-def daily_data_block(product, product_id) -> list[dict]:
-    section("每日经营数据 / 价格变化效果分析")
-    records = repository.list_daily_records(product_id)
-    st.caption("每日数据保存在当前ASIN下，用于判断调价、Coupon、Deal或广告调整后的真实效果。")
-
+def daily_records_block(product, product_id) -> list[dict]:
+    records = repository.list_daily_records(product_id); section("每日经营数据", "记录真实阶段数据；广告花费和 TACOS 二选一，保存时写入参数快照。")
     with st.expander("新增每日经营数据", expanded=not records):
-        with st.form(f"daily_record_form_{product_id}"):
-            c1, c2, c3, c4 = st.columns(4)
-            record_date = c1.date_input("日期")
-            average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"daily_avg_{product_id}")
-            sessions = c3.number_input("Session", min_value=0.0, value=0.0, step=10.0, key=f"daily_sessions_{product_id}")
-            units = c4.number_input("销量(件)", min_value=0.0, value=0.0, step=1.0, key=f"daily_units_{product_id}")
-            c1, c2 = st.columns(2)
-            ad_mode = c1.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"daily_ad_mode_{product_id}")
-            if ad_mode == "输入TACOS":
-                tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(product.tacos * 100), step=0.1, key=f"daily_tacos_{product_id}") / 100
-                ad_spend = average_price * units * tacos
-            else:
-                ad_spend = c2.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"daily_ad_{product_id}")
-                tacos = ad_spend / (average_price * units) if average_price * units > 0 else 0.0
-            note = st.text_input("备注", placeholder="调价 / Coupon / Deal / 广告预算调整 / Listing调整 / 其它动作")
-            if st.form_submit_button("保存每日数据", type="primary"):
-                warnings = input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)
-                if show_warnings(warnings):
-                    st.stop()
-                repository.upsert_daily_record(
-                    {
-                        "product_id": str(product_id),
-                        "record_date": record_date.isoformat(),
-                        "average_sale_price": average_price,
-                        "sessions": sessions,
-                        "units": units,
-                        "ad_spend": ad_spend,
-                        "tacos": tacos,
-                        "note": note.strip(),
-                        "snapshot_fixed_cost_usd": stored_fixed_cost(product),
-                        "snapshot_commission_rate": product.commission_rate,
-                        "snapshot_storage_rate": product.storage_rate,
-                        "snapshot_return_rate": product.return_rate,
-                    }
-                )
-                st.rerun()
-
-    if records:
-        edit_options = {record["id"]: f"{record['record_date']} · {record.get('note') or '无备注'}" for record in records}
-        with st.expander("编辑 / 删除历史记录", expanded=False):
-            record_id = st.selectbox("选择记录", list(edit_options.keys()), format_func=lambda item: edit_options[item])
-            selected = next(record for record in records if record["id"] == record_id)
-            with st.form(f"edit_daily_record_{record_id}"):
-                c1, c2, c3, c4 = st.columns(4)
-                record_date = c1.date_input("日期", value=pd.to_datetime(selected["record_date"]).date(), key=f"edit_date_{record_id}")
-                average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(selected["average_sale_price"]), step=0.01, key=f"edit_avg_{record_id}")
-                sessions = c3.number_input("Session", min_value=0.0, value=float(selected["sessions"]), step=10.0, key=f"edit_sessions_{record_id}")
-                units = c4.number_input("销量(件)", min_value=0.0, value=float(selected["units"]), step=1.0, key=f"edit_units_{record_id}")
-                c1, c2 = st.columns(2)
-                ad_mode = c1.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"edit_ad_mode_{record_id}")
-                if ad_mode == "输入TACOS":
-                    tacos = c2.number_input("TACOS(%)", min_value=0.0, value=float(selected["tacos"] * 100), step=0.1, key=f"edit_tacos_{record_id}") / 100
-                    ad_spend = average_price * units * tacos
-                else:
-                    ad_spend = c2.number_input("广告花费($)", min_value=0.0, value=float(selected["ad_spend"]), step=1.0, key=f"edit_ad_{record_id}")
-                    tacos = ad_spend / (average_price * units) if average_price * units > 0 else 0.0
-                note = st.text_input("备注", value=selected.get("note") or "", key=f"edit_note_{record_id}")
-                c1, c2 = st.columns(2)
-                save = c1.form_submit_button("保存修改")
-                delete = c2.form_submit_button("删除记录")
-                payload = {
-                    "product_id": str(product_id),
-                    "record_date": record_date.isoformat(),
-                    "average_sale_price": average_price,
-                    "sessions": sessions,
-                    "units": units,
-                    "ad_spend": ad_spend,
-                    "tacos": tacos,
-                    "note": note.strip(),
-                }
-                if save:
-                    warnings = input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)
-                    if show_warnings(warnings):
-                        st.stop()
-                    payload.update({
-                        "snapshot_fixed_cost_usd": selected.get("snapshot_fixed_cost_usd") or stored_fixed_cost(product),
-                        "snapshot_commission_rate": selected.get("snapshot_commission_rate") if selected.get("snapshot_commission_rate") is not None else product.commission_rate,
-                        "snapshot_storage_rate": selected.get("snapshot_storage_rate") if selected.get("snapshot_storage_rate") is not None else product.storage_rate,
-                        "snapshot_return_rate": selected.get("snapshot_return_rate") if selected.get("snapshot_return_rate") is not None else product.return_rate,
-                    })
-                    repository.update_daily_record(record_id, payload)
-                    st.rerun()
-                if delete:
-                    repository.delete_daily_record(record_id)
-                    st.rerun()
-
-        comparison_days = st.selectbox("周期对比", [7, 14, 30], format_func=lambda value: f"近{value}天 vs 前{value}天", key=f"comparison_days_{product_id}")
-        comparison, previous, latest = period_comparison_dataframe(product, records, comparison_days)
-        if not comparison.empty:
-            st.markdown("**周期阶段对比**")
-            st.dataframe(comparison, use_container_width=True, hide_index=True, row_height=40)
-            st.info(trend_conclusion(previous, latest))
-        else:
-            st.info("已保存1条每日数据。再录入1条后，会自动生成最新阶段 vs 上一阶段对比。")
-
-        history = history_dataframe(product, records)
-        st.markdown("**历史记录**")
-        st.dataframe(history, use_container_width=True, hide_index=True, row_height=40)
-
-        chart_df = pd.DataFrame([daily_record_metrics(product, record) for record in records]).sort_values("record_date")
-        chart_df = chart_df.rename(
-            columns={
-                "record_date": "日期",
-                "average_price": "销售均价",
-                "sessions": "Session",
-                "units": "销量",
-                "entered_ad_spend": "广告花费",
-                "total_net_profit": "总利润",
-                "tacos": "TACOS",
-                "note": "备注",
-                "cvr": "CVR",
-            }
-        )
-        st.plotly_chart(trend_chart(chart_df, "价格与CVR趋势", "销售均价", "CVR", "销售均价", "CVR", "$,.2f", ".1%"), use_container_width=True)
-        st.plotly_chart(trend_chart(chart_df, "Session与销量趋势", "Session", "销量", "Session", "销量", ",.0f", ",.0f"), use_container_width=True)
-        st.plotly_chart(trend_chart(chart_df, "总利润与TACOS趋势", "总利润", "TACOS", "总利润", "TACOS", "$,.2f", ".1%"), use_container_width=True)
-    else:
-        st.info("还没有每日经营数据。先录入一条，用来开始跟踪价格变化和运营调整效果。")
-    end_section()
-    return records
-
-
-def recommendation_block(product, breakdown: dict, be_price: float | None, target_price: float | None, records: list[dict] | None = None) -> None:
-    section("当前经营建议")
-    target_limit = max_tacos_for_margin(product, product.target_margin)
-    be_tacos = breakeven_tacos(product)
-    room = target_limit - product.tacos
-
-    if breakdown["net_profit"] <= 0:
-        headline = "当前状态：优先止损"
-    elif product.tacos > target_limit:
-        headline = "当前状态：优先压广告"
-    elif product.price < (target_price or 0):
-        headline = "当前状态：优先保利润"
-    else:
-        headline = "当前状态：可稳健经营"
-    st.markdown(f"**【{headline}】**")
-
-    if be_price and product.price < be_price:
-        price_text = f"当前售价{money(product.price)}，低于绝对保本售价{money(be_price)}，不建议继续降价。"
-    elif target_price and product.price < target_price:
-        price_text = f"当前售价{money(product.price)}，低于目标利润最低售价{money(target_price)}，促销前先抬高利润安全边际。"
-    else:
-        price_text = f"当前售价{money(product.price)}，仍高于目标利润最低售价{money(target_price)}。" if target_price else "当前成本结构下无法计算目标利润最低售价。"
-
-    if product.tacos > be_tacos:
-        ad_text = f"当前TACOS{pct(product.tacos)}，高于保本TACOS{pct(be_tacos)}，应优先压缩低效广告花费。"
-    elif product.tacos > target_limit:
-        ad_text = f"当前TACOS{pct(product.tacos)}，高于目标利润TACOS上限{pct(target_limit)}，先控广告再放量。"
-    else:
-        ad_text = f"当前TACOS{pct(product.tacos)}，广告剩余空间{pp(room)}，{headroom_message(room)}。"
-
-    if breakdown["net_profit"] <= 0:
-        profit_text = "单件利润为负，先恢复正利润，再考虑放量。"
-    elif product.positioning == "利润款":
-        profit_text = "利润款更重视利润保护，避免用过高TACOS换短期销量。"
-    elif product.positioning == "增长款":
-        profit_text = "增长款可允许较低利润换增长，但净利率不能长期低于目标。"
-    elif product.stage in {"新品", "成长期"}:
-        profit_text = "新品或成长期允许适度低利润，但需确保广告投入正在换取订单、排名或自然流量增长。"
-    elif product.positioning == "清库存" or product.stage == "清库存":
-        profit_text = "清库存可接近保本，但需要清楚知道最低可接受售价。"
-    else:
-        profit_text = f"当前净利率{pct(breakdown['net_margin'])}，目标净利率{pct(product.target_margin)}。"
-
-    if records and len(records) >= 2:
-        chronological = sorted(records, key=lambda item: item["record_date"])
-        previous = daily_record_metrics(product, chronological[-2])
-        latest = daily_record_metrics(product, chronological[-1])
-        if latest["total_net_profit"] < previous["total_net_profit"] and latest["units"] >= previous["units"]:
-            profit_text = "最近销量没有变差，但总利润下降，先确认调价或广告动作是否压缩了利润。"
-        elif latest["total_net_profit"] > previous["total_net_profit"] and latest["tacos"] <= previous["tacos"]:
-            profit_text = "最近总利润改善且TACOS未恶化，当前调整可以继续观察。"
-
-    st.write(f"价格：{price_text}")
-    st.write(f"广告：{ad_text}")
-    st.write(f"利润：{profit_text}")
-    end_section()
-
-
-def overview_line(product, breakdown: dict, be_price: float | None, target_price: float | None, room: float) -> str:
-    price_parts = []
-    if be_price is not None:
-        be_gap = product.price - be_price
-        price_parts.append(f"当前售价{'高于' if be_gap >= 0 else '低于'}保本售价{money(abs(be_gap))}")
-    if target_price is not None:
-        target_gap = product.price - target_price
-        price_parts.append(f"当前售价{'高于' if target_gap >= 0 else '低于'}目标利润最低售价{money(abs(target_gap))}")
-    ad_text = f"当前TACOS{'仍有' if room >= 0 else '超出'}{pp(abs(room))}空间"
-    return "，".join(price_parts + [ad_text]) + "。"
+        with st.form(f"daily_add_{product_id}"):
+            c1, c2, c3, c4 = st.columns(4); record_date = c1.date_input("日期", key=f"date_add_{product_id}"); average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(product.average_sale_price or product.price), step=0.01, key=f"avg_add_{product_id}"); sessions = c3.number_input("Session", min_value=0.0, value=0.0, step=10.0, key=f"session_add_{product_id}"); units = c4.number_input("销量(件)", min_value=0.0, value=0.0, step=1.0, key=f"units_add_{product_id}")
+            mode = st.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"ad_mode_add_{product_id}")
+            if mode == "输入TACOS": tacos = st.number_input("TACOS(%)", min_value=0.0, max_value=100.0, value=float(product.tacos * 100), step=0.1, key=f"tacos_add_{product_id}") / 100; ad_spend = average_price * units * tacos
+            else: ad_spend = st.number_input("广告花费($)", min_value=0.0, value=0.0, step=1.0, key=f"ad_add_{product_id}"); tacos = ad_spend / (average_price * units) if average_price * units else 0.0
+            note = st.text_input("备注", placeholder="调价 / Coupon / Deal / 广告调整 / Listing调整")
+            if st.form_submit_button("保存每日数据", type="primary") and not show_warnings(input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)):
+                repository.upsert_daily_record({"product_id":str(product_id), "record_date":record_date.isoformat(), "average_sale_price":average_price, "sessions":sessions, "units":units, "ad_spend":ad_spend, "tacos":tacos, "note":note.strip(), "snapshot_fixed_cost_usd":stored_fixed_cost(product), "snapshot_commission_rate":product.commission_rate, "snapshot_storage_rate":product.storage_rate, "snapshot_return_rate":product.return_rate}); st.rerun()
+    if not records: st.info("还没有每日经营数据。先录入一条，开始跟踪价格变化。"); return records
+    with st.expander("编辑 / 删除历史记录", expanded=False):
+        options = {record["id"]: f"{record['record_date']} · {record.get('note') or '无备注'}" for record in records}; record_id = st.selectbox("选择记录", list(options), format_func=lambda value: options[value], key=f"edit_pick_{product_id}"); selected = next(item for item in records if item["id"] == record_id)
+        with st.form(f"daily_edit_{record_id}"):
+            c1, c2, c3, c4 = st.columns(4); record_date = c1.date_input("日期", value=pd.to_datetime(selected["record_date"]).date()); average_price = c2.number_input("销售均价($)", min_value=0.0, value=float(selected["average_sale_price"]), step=0.01); sessions = c3.number_input("Session", min_value=0.0, value=float(selected["sessions"]), step=10.0); units = c4.number_input("销量(件)", min_value=0.0, value=float(selected["units"]), step=1.0)
+            mode = st.selectbox("广告输入方式", ["输入TACOS", "输入广告花费"], key=f"ad_mode_edit_{record_id}")
+            if mode == "输入TACOS": tacos = st.number_input("TACOS(%)", min_value=0.0, max_value=100.0, value=float(selected["tacos"]*100), step=0.1, key=f"tacos_edit_{record_id}")/100; ad_spend = average_price*units*tacos
+            else: ad_spend = st.number_input("广告花费($)", min_value=0.0, value=float(selected["ad_spend"]), step=1.0, key=f"ad_edit_{record_id}"); tacos = ad_spend/(average_price*units) if average_price*units else 0.0
+            note = st.text_input("备注", value=selected.get("note") or "", key=f"note_edit_{record_id}"); c1, c2 = st.columns(2); save_action = c1.form_submit_button("保存修改"); delete_action = c2.form_submit_button("删除记录")
+            if save_action and not show_warnings(input_warnings(product, sessions=sessions, units=units, tacos=tacos, ad_spend=ad_spend)):
+                repository.update_daily_record(record_id, {"product_id":str(product_id), "record_date":record_date.isoformat(), "average_sale_price":average_price, "sessions":sessions, "units":units, "ad_spend":ad_spend, "tacos":tacos, "note":note.strip(), "snapshot_fixed_cost_usd":selected.get("snapshot_fixed_cost_usd") or stored_fixed_cost(product), "snapshot_commission_rate":selected.get("snapshot_commission_rate") if selected.get("snapshot_commission_rate") is not None else product.commission_rate, "snapshot_storage_rate":selected.get("snapshot_storage_rate") if selected.get("snapshot_storage_rate") is not None else product.storage_rate, "snapshot_return_rate":selected.get("snapshot_return_rate") if selected.get("snapshot_return_rate") is not None else product.return_rate}); st.rerun()
+            if delete_action: repository.delete_daily_record(record_id); st.rerun()
+    section("周期对比", "周期指标按阶段总额重新计算，不对每日百分比做简单平均。")
+    comparison, previous, current = comparison_table(product, records, f"compare_{product_id}")
+    if comparison.empty: st.info("当前记录数量不足以组成两个阶段，请继续录入每日数据。")
+    else: st.dataframe(comparison, width="stretch", hide_index=True); st.markdown(f"**价格变化效果判断**  {effect_conclusion(previous, current)}")
+    history_charts(product, records, f"history_{product_id}")
+    history = []
+    for record in records:
+        item = daily_record_metrics(product, record); history.append({"日期":item["record_date"], "销售均价":money(item["average_price"]), "Session":count_text(item["sessions"]), "CVR":pct(item["cvr"]), "销量":count_text(item["units"]), "广告花费":money(item["ad_spend"]), "TACOS":pct(item["tacos"]), "销售额":money(item["revenue"]), "单件毛利润":money(item["unit_net_profit"]), "总毛利润":money(item["total_net_profit"]), "毛利率":pct(item["net_margin"]), "备注":item["note"]})
+    section("历史记录"); st.dataframe(pd.DataFrame(history), width="stretch", hide_index=True); return records
 
 
 def parent_view(parent_asin: str, products: list[dict]) -> None:
     children = [row for row in products if parent_asin_of(product_from_row(row)) == parent_asin]
-    if not children:
-        st.info("该产品尚未绑定 Parent ASIN。")
-        return
-    metrics = []
+    if not children: st.info("该产品尚未绑定 Parent ASIN。"); return
+    items = []
     for row in children:
-        product = product_from_row(row)
-        breakdown = profit_breakdown(product)
-        metrics.append({"row": row, "product": product, "breakdown": breakdown, "units": product.daily_sales * 30})
-    revenue = sum(item["breakdown"]["monthly_revenue"] for item in metrics)
-    profit = sum(item["breakdown"]["monthly_profit"] for item in metrics)
-    ad_spend = sum(item["breakdown"]["ad_cost"] * item["units"] for item in metrics)
-    units = sum(item["units"] for item in metrics)
-    st.subheader(f"父ASIN视角 · {parent_asin}")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("子体数量", len(children)); c2.metric("总销量", count_text(units)); c3.metric("总销售额", money(revenue)); c4.metric("总毛利润", money(profit))
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("总广告花费", money(ad_spend)); c2.metric("TACOS", pct(ad_spend / revenue if revenue else 0)); c3.metric("毛利率", pct(profit / revenue if revenue else 0)); c4.metric("销售均价", money(revenue / units if units else 0))
+        product = product_from_row(row); items.append((product, profit_breakdown(product), product.daily_sales*30))
+    revenue = sum(bd["monthly_revenue"] for _, bd, _ in items); profit = sum(bd["monthly_profit"] for _, bd, _ in items); ad = sum(bd["ad_cost"]*units for _, bd, units in items); units = sum(units for _, _, units in items)
+    st.subheader(f"父ASIN视角 · {parent_asin}"); c1, c2, c3, c4 = st.columns(4); c1.metric("子体数量", len(items)); c2.metric("总销量", count_text(units)); c3.metric("总销售额", money(revenue)); c4.metric("总毛利润", money(profit)); c1, c2, c3, c4 = st.columns(4); c1.metric("总广告花费", money(ad)); c2.metric("TACOS", pct(ad/revenue if revenue else 0)); c3.metric("毛利率", pct(profit/revenue if revenue else 0)); c4.metric("销售均价", money(revenue/units if units else 0))
     rows = []
-    for item in metrics:
-        product = item["product"]; bd = item["breakdown"]
-        rows.append({"子ASIN": product.asin, "FNSKU": product.fnsku, "产品名称": product.name, "当前售价": money(product.price), "销量": count_text(item["units"]), "销售额": money(bd["monthly_revenue"]), "广告花费": money(bd["ad_cost"] * item["units"]), "TACOS": pct(product.tacos), "单件毛利润": money(bd["net_profit"]), "毛利率": pct(bd["net_margin"]), "毛利润贡献": money(bd["monthly_profit"]), "销量占比": pct(item["units"] / units if units else 0)})
-    st.markdown("**子体贡献表**")
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    for product, bd, child_units in items: rows.append({"子ASIN":product.asin, "FNSKU":product.fnsku, "产品名称":product.name, "当前售价":money(product.price), "销量":count_text(child_units), "销售额":money(bd["monthly_revenue"]), "广告花费":money(bd["ad_cost"]*child_units), "TACOS":pct(product.tacos), "单件毛利润":money(bd["net_profit"]), "毛利率":pct(bd["net_margin"]), "毛利润贡献":money(bd["monthly_profit"]), "销量占比":pct(child_units/units if units else 0)})
+    section("子体贡献表"); st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 
-def detail(row: dict, selected_id) -> None:
-    product = product_from_row(row)
-    show_warnings(input_warnings(product))
-    breakdown = profit_breakdown(product)
-    target_limit = max_tacos_for_margin(product, product.target_margin)
-    room = ad_headroom(product)
-    be_tacos = breakeven_tacos(product)
-    be_price = breakeven_price(product)
-    target_price = target_margin_price(product)
-    target_gap = tacos_vs_target(product)
-
-    st.title(product.name)
-    st.caption(f"Parent ASIN：{parent_asin_of(product) or '-'} · ASIN：{product.asin or '-'} · FNSKU：{product.fnsku or '-'} · 阶段：{product.stage} · 定位：{product.positioning}")
-    all_products_for_parent = repository.list_products()
+def detail(row: dict, selected_id, all_products: list[dict]) -> None:
+    product = product_from_row(row); warnings = input_warnings(product)
+    if warnings: st.error("请检查输入数据：" + "；".join(warnings))
+    st.title(product.name); st.caption(f"Parent ASIN：{parent_asin_of(product) or '-'} · ASIN：{product.asin or '-'} · FNSKU：{product.fnsku or '-'}")
+    c1, c2, c3 = st.columns([1, 1, 1]); c1.download_button("导出当前产品", build_profit_workbook([row]), export_filename([row]), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"export_current_{selected_id}"); c2.download_button("导出全部产品", build_profit_workbook(all_products), export_filename(all_products), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"export_all_{selected_id}")
     if parent_asin_of(product):
-        parent_mode = st.radio("分析视角", ["子ASIN视角", "父ASIN视角"], horizontal=True, key=f"analysis_view_{selected_id}")
-        if parent_mode == "父ASIN视角":
-            parent_view(parent_asin_of(product), all_products_for_parent)
-            return
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        if st.download_button(
-            "导出当前产品",
-            data=build_profit_workbook([row]),
-            file_name=export_filename([row]),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ):
-            pass
-    with c2:
-        all_products = repository.list_products()
-        st.download_button(
-            "导出全部产品",
-            data=build_profit_workbook(all_products),
-            file_name=export_filename(all_products),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-    with st.expander("编辑产品档案", expanded=False):
-        data = profile_form(row, "保存修改")
-        if data:
-            repository.update_product(selected_id, data)
-            st.rerun()
-
-    section("当前经营概览")
-    target_margin = st.number_input(
-        "目标净利率(%)",
-        min_value=0.0,
-        value=float(product.target_margin * 100),
-        step=0.5,
-        key=f"overview_target_margin_{selected_id}",
-        help="修改后可立即查看测算结果，点击保存按钮后写入当前产品。",
-    ) / 100
-    if abs(target_margin - product.target_margin) > 1e-9:
-        product.target_margin = target_margin
-        breakdown = profit_breakdown(product)
-        target_limit = max_tacos_for_margin(product, product.target_margin)
-        room = ad_headroom(product)
-        be_tacos = breakeven_tacos(product)
-        be_price = breakeven_price(product)
-        target_price = target_margin_price(product)
-        if st.button("保存目标净利率到当前产品", key=f"save_target_margin_{selected_id}"):
-            updated = dict(row)
-            updated["target_margin"] = target_margin
-            repository.update_product(selected_id, updated)
-            st.rerun()
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("当前售价", money(product.price))
-    c2.metric("单件毛利润", money(breakdown["net_profit"]))
-    c3.metric("当前毛利率", pct(breakdown["net_margin"]))
-    c4.metric("月预估毛利润", money(breakdown["monthly_profit"]))
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("当前TACOS", pct(product.tacos))
-    c2.metric("目标TACOS", pct(product.target_tacos))
-    c3.metric("保本TACOS", pct(be_tacos))
-    c4.metric("目标利润TACOS上限", pct(target_limit))
-    st.markdown(
-        f'<div class="decision">{overview_line(product, breakdown, be_price, target_price, room)}广告剩余空间：<span class="{tone_class(room)}">{pp(room)}</span>。{headroom_message(room)}。当前TACOS比目标TACOS{"高" if target_gap >= 0 else "低"}{pp(abs(target_gap))}。</div>',
-        unsafe_allow_html=True,
-    )
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("绝对保本售价", money(be_price))
-    c2.metric("目标净利率最低售价", money(target_price))
-    c3.metric("距离保本售价", money(product.price - be_price) if be_price is not None else "无法计算")
-    c4.metric("距离目标利润最低售价", money(product.price - target_price) if target_price is not None else "无法计算")
-    if be_price is not None and product.price < be_price:
-        st.error("当前售价已经低于绝对保本售价。")
-    st.caption("月预估销售额 = 当前售价 × 预估销量 × 30；月预估毛利润 = 单件毛利润 × 预估销量 × 30。这是按当前经营状态推算的运营测算值。")
-    end_section()
-
-    section("利润与成本")
-    st.caption(f"当前使用的固定成本：{money(fixed_cost(product))} / 件；基础参数最后更新：{row.get('updated_at') or '未知'}。")
-    st.table(
-        pd.DataFrame(
-            [
-                ["售价", money(product.price), "当前售价"],
-                ["固定成本", f"-{money(breakdown['fixed_cost'])}", "产品基础参数中直接填写的固定成本"],
-                ["平台佣金", f"-{money(breakdown['commission'])}", f"{money(product.price)} × {pct(product.commission_rate)}"],
-                ["广告成本", f"-{money(breakdown['ad_cost'])}", f"{money(product.price)} × {pct(product.tacos)}"],
-                ["仓储预留", f"-{money(breakdown['storage_reserve'])}", f"{money(product.price)} × {pct(product.storage_rate)}"],
-                ["退货预留", f"-{money(breakdown['return_reserve'])}", f"{pct(product.return_rate)} × ({money(breakdown['fixed_cost'])} + {money(breakdown['commission'])} × 20%)"],
-                ["单件毛利润", money(breakdown["net_profit"]), "售价 - 固定成本 - 平台佣金 - 广告成本 - 仓储预留 - 退货预留"],
-            ],
-            columns=["项目", "金额", "计算来源"],
-        )
-    )
-    with st.expander("查看公式"):
-        st.write("平台佣金 = 售价 × 平台佣金率")
-        st.write("广告成本 = 售价 × 当前TACOS")
-        st.write("仓储预留 = 售价 × 仓储率")
-        st.write("退货预留 = 退货率 × [固定成本 + (售价 × 平台佣金率 × 20%)]")
-        st.write("本工具中的毛利润为运营测算口径：售价 - 固定成本 - 平台佣金 - 广告成本 - 仓储预留 - 退货预留")
-        st.write("毛利率 = 单件毛利润 ÷ 售价")
-    end_section()
-
-    section("广告决策")
-    left, right = st.columns([2, 1])
-    with left:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("当前TACOS", pct(product.tacos))
-        c2.metric("目标TACOS", pct(product.target_tacos))
-        c3.metric("当前与目标差值", pp(target_gap))
-        c1, c2, c3 = st.columns(3)
-        c1.metric("保本TACOS", pct(be_tacos))
-        c2.metric("目标利润TACOS上限", pct(target_limit))
-        c3.metric("广告剩余空间", pp(room))
-        st.info(headroom_message(room))
-    with right:
-        target_daily_revenue = st.number_input("目标日销售额($)", min_value=0.0, value=float(round(product.price * product.daily_sales, 2)), step=10.0)
-        target_tacos = st.number_input("目标TACOS(%)", min_value=0.0, value=float(product.target_tacos * 100), step=0.5, key="ad_budget_tacos") / 100
-        st.metric("广告花费参考", f"{money(target_daily_revenue * target_tacos)}/天")
-        st.caption("这是当前销售目标和TACOS下可承受的广告花费，不等于广告活动必须设置的Budget。")
-    end_section()
-
-    quick_estimate_block(product)
-    records = daily_data_block(product, selected_id)
-
-    section("价格模拟")
-    low_default = max(0.01, product.price - 3)
-    high_default = product.price + 3
-    c1, c2, c3 = st.columns(3)
-    low = c1.number_input("最低价格($)", min_value=0.01, value=float(round(low_default, 2)), step=0.5)
-    high = c2.number_input("最高价格($)", min_value=0.01, value=float(round(high_default, 2)), step=0.5)
-    step = c3.number_input("价格间隔($)", min_value=0.01, value=1.0, step=0.25)
-    prices = []
-    p = high
-    while p >= low - 1e-9:
-        prices.append(round(p, 2))
-        p -= step
-    if round(product.price, 2) not in prices:
-        prices.append(round(product.price, 2))
-        prices = sorted(set(prices), reverse=True)
-
-    sim_rows = []
-    acceptable_prices = []
-    for price in prices:
-        bd = profit_breakdown(product, price=price)
-        max_t = max_tacos_for_margin(product, product.target_margin, price=price)
-        row_status = simulation_status(bd["net_profit"], bd["net_margin"], product.target_margin)
-        label = "（当前售价）" if abs(price - product.price) < 0.001 else ""
-        if bd["net_margin"] >= product.target_margin and bd["net_profit"] > 0:
-            acceptable_prices.append(price)
-        sim_rows.append(
-            {
-                "售价": f"{money(price)}{label}",
-                "单件净利": money(bd["net_profit"]),
-                "净利率": pct(bd["net_margin"]),
-                "保本TACOS": pct(breakeven_tacos(product, price=price)),
-                "目标利润TACOS上限": pct(max_t),
-                "状态": row_status,
-            }
-        )
-    st.dataframe(pd.DataFrame(sim_rows), use_container_width=True, hide_index=True, row_height=42)
-    if target_price is not None:
-        st.info(f"在当前TACOS下，最低降到{money(target_price)}左右仍可保持{pct(product.target_margin)}目标净利率。")
-    end_section()
-
-    recommendation_block(product, breakdown, be_price, target_price, records)
+        view = c3.radio("分析视角", ["子ASIN视角", "父ASIN视角"], key=f"view_{selected_id}")
+        if view == "父ASIN视角": parent_view(parent_asin_of(product), all_products); return
+    else: c3.caption("未绑定 Parent ASIN")
+    tabs = st.tabs(["① 概况", "② 模拟", "③ 记录"])
+    with tabs[0]: st.caption("看现在：这个产品经营得怎么样？"); overview_tab(product, row, selected_id)
+    with tabs[1]: st.caption("看未来：调整经营参数后会怎么样？"); price_simulation(product, f"sim_{selected_id}"); quick_estimate(product, f"estimate_{selected_id}"); ad_budget_reference(product, f"budget_{selected_id}")
+    with tabs[2]: st.caption("看过去：之前的调整有没有效果？"); daily_records_block(product, selected_id)
 
 
 def main() -> None:
-    try:
-        products = repository.list_products()
-    except Exception:
-        st.error("数据读取失败。请检查 Supabase 表结构、Secrets 配置或部署日志。")
-        return
-
-    st.sidebar.title("产品管理")
-    page = st.sidebar.radio("页面", ["多产品总览", "单品详情"], horizontal=True)
-
+    try: products = repository.list_products()
+    except Exception: st.error("数据读取失败，请检查 Supabase 表结构、Secrets 配置或部署日志。"); return
+    st.sidebar.title("产品管理"); page = st.sidebar.radio("页面", ["多产品总览", "单品详情"], horizontal=True)
     with st.sidebar.expander("新增产品"):
-        data = profile_form({}, "保存新产品")
-        if data:
-            new_id = repository.insert_product(data)
-            st.session_state["selected_product_id"] = new_id
-            st.rerun()
-
+        data = profile_form({}, "保存新产品", "new_product_form")
+        if data: new_id = repository.insert_product(data); st.session_state["selected_product_id"] = new_id; st.rerun()
     selected_id = None
     if products:
-        ids = [p["id"] for p in products]
-        labels = {p["id"]: f"{p['asin']} · {p['name']}" for p in products}
-        current = st.session_state.get("selected_product_id", ids[0])
-        selected_id = st.sidebar.selectbox(
-            "根据ASIN切换产品",
-            ids,
-            format_func=lambda pid: labels.get(pid, str(pid)),
-            index=ids.index(current) if current in ids else 0,
-        )
-        st.session_state["selected_product_id"] = selected_id
+        ids = [item["id"] for item in products]; labels = {item["id"]:f"{item['asin']} · {item['name']}" for item in products}; current = st.session_state.get("selected_product_id", ids[0]); selected_id = st.sidebar.selectbox("根据 ASIN 切换产品", ids, format_func=lambda value:labels.get(value, str(value)), index=ids.index(current) if current in ids else 0); st.session_state["selected_product_id"] = selected_id
         c1, c2 = st.sidebar.columns(2)
-        if c1.button("复制产品"):
-            copied_id = repository.duplicate_product(selected_id)
-            if copied_id:
-                st.session_state["selected_product_id"] = copied_id
-                st.rerun()
-        if c2.button("删除产品", type="secondary"):
-            repository.delete_product(selected_id)
-            st.session_state.pop("selected_product_id", None)
-            st.rerun()
-
-    if page == "多产品总览":
-        overview(products)
+        if c1.button("复制产品"): copied = repository.duplicate_product(selected_id); st.session_state["selected_product_id"] = copied if copied else selected_id; st.rerun()
+        if c2.button("删除产品"): repository.delete_product(selected_id); st.session_state.pop("selected_product_id", None); st.rerun()
+    if page == "多产品总览": overview(products)
     elif selected_id:
         row = repository.get_product(selected_id)
-        if row:
-            detail(row, selected_id)
-    else:
-        st.info("请先在侧边栏新增一个产品。")
+        if row: detail(row, selected_id, products)
+    else: st.info("请先在侧边栏新增一个产品。")
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
