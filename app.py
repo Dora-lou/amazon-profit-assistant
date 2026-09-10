@@ -553,7 +553,7 @@ def main() -> None:
     except Exception: st.error("数据读取失败，请检查 Supabase 表结构、Secrets 配置或部署日志。"); return
     st.sidebar.markdown('<div class="side-brand">Amazon 运营决策助手<small>Operations workspace</small></div>', unsafe_allow_html=True)
     st.sidebar.markdown('<div class="side-section-label">工作台</div>', unsafe_allow_html=True)
-    nav_options = ["▦  产品总览", "◉  单品分析", "▤  数据管理", "⇩  导出报表", "⚙  设置"]
+    nav_options = ["▦  产品总览", "◉  单品分析", "⇩  导出报表", "⚙  设置"]
     page = st.sidebar.radio("导航", nav_options, label_visibility="collapsed", key="main_navigation")
     with st.sidebar.expander("新增产品"):
         data = profile_form({}, "保存新产品", "new_product_form")
@@ -565,7 +565,7 @@ def main() -> None:
         if c1.button("复制产品"): copied = repository.duplicate_product(selected_id); st.session_state["selected_product_id"] = copied if copied else selected_id; st.rerun()
         if c2.button("删除产品"): repository.delete_product(selected_id); st.session_state.pop("selected_product_id", None); st.rerun()
     if page == "▦  产品总览": overview(products)
-    elif page in {"◉  单品分析", "▤  数据管理"} and selected_id:
+    elif page == "◉  单品分析" and selected_id:
         row = repository.get_product(selected_id)
         if row: detail(row, selected_id, products)
     elif page == "⇩  导出报表": export_page(products)
