@@ -35,6 +35,7 @@
 ├── database/
 │   └── .gitkeep
 └── assets/
+    ├── style.css
     └── .gitkeep
 ```
 
